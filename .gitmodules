@@ -1,0 +1,3 @@
+[submodule "extensions/pi-sandbox"]
+	path = extensions/pi-sandbox
+	url = https://github.com/carderne/pi-sandbox
