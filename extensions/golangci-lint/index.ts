@@ -41,33 +41,42 @@ export default function (pi: ExtensionAPI) {
   const touchedFiles: Set<string> = new Set();
   const globalSettingsPath = path.join(process.env.HOME || "", ".pi", "agent", "settings.json");
 
-  function findGoMod(cwd: string): string | undefined {
-    // Check current directory first
-    if (fs.existsSync(path.join(cwd, "go.mod"))) {
-      return cwd;
+  function findLinterConfig(cwd: string): string | undefined {
+    let currentDir = cwd;
+    const root = path.parse(currentDir).root;
+
+    while (true) {
+      if (fs.existsSync(path.join(currentDir, ".golangci.yaml"))) {
+        return currentDir;
+      }
+
+      if (currentDir === root) break;
+      currentDir = path.dirname(currentDir);
     }
 
-    // Try to find go.mod via git ls-files
     try {
-      const result = child_process.execSync("git ls-files --full-name go.mod", {
+      const gitRoot = child_process.execSync("git rev-parse --show-toplevel", {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+      }).trim();
+
+      const result = child_process.execSync("git ls-files --full-name '**/.golangci.yaml'", {
         cwd,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
       });
-      const goModPath = result.trim();
-      if (goModPath) {
-        // Get directory of the file relative to git root
-        const goModDir = path.dirname(goModPath);
-        // Need to find git root to resolve the path
-        const gitRoot = child_process.execSync("git rev-parse --show-toplevel", {
-          cwd,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "ignore"],
-        }).trim();
-        return path.join(gitRoot, goModDir);
+
+      const candidates = result
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((file) => path.join(gitRoot, path.dirname(file)));
+
+      if (candidates.length > 0) {
+        return candidates[0];
       }
     } catch {
-      // Not a git repository or go.mod not tracked
     }
 
     return undefined;
@@ -222,7 +231,7 @@ export default function (pi: ExtensionAPI) {
     description: "golangci-lint settings",
     handler: async (_args, ctx) => {
       if (!isActive) {
-        ctx.ui.notify("golangci-lint: no go.mod found in this project", "warning");
+        ctx.ui.notify("golangci-lint: no .golangci.yaml found in this project", "warning");
         return;
       }
 
@@ -278,8 +287,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    // Check if go.mod exists in cwd or any parent directory
-    const moduleRoot = findGoMod(ctx.cwd);
+    const moduleRoot = findLinterConfig(ctx.cwd);
     isActive = !!moduleRoot;
 
     if (!isActive) {
@@ -292,7 +300,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_switch", async (_event, ctx) => {
-    const moduleRoot = findGoMod(ctx.cwd);
+    const moduleRoot = findLinterConfig(ctx.cwd);
     isActive = !!moduleRoot;
 
     if (!isActive) {
@@ -305,7 +313,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_tree", async (_event, ctx) => {
-    const moduleRoot = findGoMod(ctx.cwd);
+    const moduleRoot = findLinterConfig(ctx.cwd);
     isActive = !!moduleRoot;
 
     if (!isActive) {
@@ -318,7 +326,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_fork", async (_event, ctx) => {
-    const moduleRoot = findGoMod(ctx.cwd);
+    const moduleRoot = findLinterConfig(ctx.cwd);
     isActive = !!moduleRoot;
 
     if (!isActive) {
