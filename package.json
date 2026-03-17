@@ -8,13 +8,13 @@
     "@mariozechner/pi-tui": "^0.56.0",
     "@sinclair/typebox": "^0.34.48",
     "pi-ask-user": "^0.3.0",
-    "pi-sandbox": "^0.2.6"
+    "pi-rtk-optimizer": "^0.4.0"
   },
   "pi": {
     "extensions": [
       "extensions",
-      "node_modules/pi-sandbox",
-      "node_modules/pi-ask-user"
+      "node_modules/pi-ask-user",
+      "node_modules/pi-rtk-optimizer"
     ],
     "skills": [
       "skills"
