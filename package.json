@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.42",
     "@mariozechner/pi-ai": "^0.56.0",
     "@mariozechner/pi-coding-agent": "^0.56.0",
     "@mariozechner/pi-tui": "^0.56.0",
