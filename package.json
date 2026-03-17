@@ -7,12 +7,14 @@
     "@mariozechner/pi-coding-agent": "^0.56.0",
     "@mariozechner/pi-tui": "^0.56.0",
     "@sinclair/typebox": "^0.34.48",
+    "pi-ask-user": "^0.3.0",
     "pi-sandbox": "^0.2.6"
   },
   "pi": {
     "extensions": [
       "extensions",
-      "node_modules/pi-sandbox"
+      "node_modules/pi-sandbox",
+      "node_modules/pi-ask-user"
     ],
     "skills": [
       "skills"
