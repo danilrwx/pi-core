@@ -17,6 +17,8 @@
   "pi": {
     "extensions": [
       "extensions",
+      "extensions/lsp/lsp.ts",
+      "extensions/lsp/lsp-tool.ts",
       "node_modules/pi-ask-user",
       "node_modules/pi-rtk-optimizer"
     ],
