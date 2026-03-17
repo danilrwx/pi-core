@@ -9,7 +9,8 @@
     "@mariozechner/pi-tui": "^0.56.0",
     "@sinclair/typebox": "^0.34.48",
     "pi-ask-user": "^0.3.0",
-    "pi-rtk-optimizer": "^0.4.0"
+    "pi-rtk-optimizer": "^0.4.0",
+    "picomatch": "^4.0.3"
   },
   "pi": {
     "extensions": [
