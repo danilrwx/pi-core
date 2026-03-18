@@ -288,6 +288,49 @@ function createTempDir(): string {
   return dir;
 }
 
+test("saveGrantToConfig creates full default template when file is missing", () => {
+  const dir = createTempDir();
+
+  saveGrantToConfig("project", dir, { reads: ["/tmp/new-path"] });
+
+  const configPath = join(dir, ".pi", "sandbox.json");
+  const result = JSON.parse(readFileSync(configPath, "utf-8"));
+
+  assert.equal(result.enabled, true);
+  assert.equal(result.mode, "interactive");
+  assert.deepEqual(result.network.allowedDomains, []);
+  assert.deepEqual(result.network.deniedDomains, []);
+  assert.ok(Array.isArray(result.filesystem.allowRead));
+  assert.ok(result.filesystem.allowRead.includes("/tmp/new-path"));
+  assert.deepEqual(result.filesystem.allowWrite, []);
+  assert.deepEqual(result.filesystem.allowReadWrite, []);
+  assert.deepEqual(result.filesystem.denyRead, []);
+  assert.deepEqual(result.filesystem.denyWrite, []);
+
+  rmSync(dir, { recursive: true });
+});
+
+test("saveDomainToConfig creates full default template when file is missing", () => {
+  const dir = createTempDir();
+
+  saveDomainToConfig("project", dir, "api.github.com:443");
+
+  const configPath = join(dir, ".pi", "sandbox.json");
+  const result = JSON.parse(readFileSync(configPath, "utf-8"));
+
+  assert.equal(result.enabled, true);
+  assert.equal(result.mode, "interactive");
+  assert.ok(result.network.allowedDomains.includes("api.github.com:443"));
+  assert.deepEqual(result.network.deniedDomains, []);
+  assert.deepEqual(result.filesystem.allowRead, []);
+  assert.deepEqual(result.filesystem.allowWrite, []);
+  assert.deepEqual(result.filesystem.allowReadWrite, []);
+  assert.deepEqual(result.filesystem.denyRead, []);
+  assert.deepEqual(result.filesystem.denyWrite, []);
+
+  rmSync(dir, { recursive: true });
+});
+
 test("saveGrantToConfig preserves existing fields with trailing commas", () => {
   const dir = createTempDir();
   const configDir = join(dir, ".pi");

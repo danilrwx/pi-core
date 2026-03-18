@@ -2,6 +2,9 @@
   "name": "pi-core",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --import @mariozechner/jiti/register --test"
+  },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.42",
     "@mariozechner/pi-ai": "^0.56.0",

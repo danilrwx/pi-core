@@ -109,7 +109,7 @@ export function saveGrantToConfig(
   grant: { reads?: string[]; writes?: string[] },
 ): { error?: string } {
   const path = configPathForScope(scope, cwd);
-  const existing = readConfigFile(path) ?? {};
+  const existing: Record<string, any> = readConfigFile(path) ?? normalizeConfig({});
 
   if (!existing.filesystem) existing.filesystem = {};
 
@@ -134,7 +134,7 @@ export function saveDomainToConfig(
   host: string,
 ): { error?: string } {
   const path = configPathForScope(scope, cwd);
-  const existing = readConfigFile(path) ?? {};
+  const existing: Record<string, any> = readConfigFile(path) ?? normalizeConfig({});
 
   if (!existing.network) existing.network = {};
   const current: string[] = existing.network.allowedDomains ?? [];
