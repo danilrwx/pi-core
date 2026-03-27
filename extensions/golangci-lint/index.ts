@@ -15,6 +15,12 @@ import * as child_process from "node:child_process";
 import { type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const YELLOW = "\x1b[33m", RESET = "\x1b[0m";
+const GOLANGCI_CONFIGS = [
+  ".golangci.yml",
+  ".golangci.yaml",
+  ".golangci.toml",
+  ".golangci.json",
+] as const;
 
 export default function (pi: ExtensionAPI) {
   let statusUpdateFn: ((key: string, text: string | undefined) => void) | null = null;
@@ -22,12 +28,28 @@ export default function (pi: ExtensionAPI) {
 
   const touchedFiles: Set<string> = new Set();
 
+  function findGitRoot(cwd: string): string | undefined {
+    try {
+      return child_process.execSync("git rev-parse --show-toplevel", {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return undefined;
+    }
+  }
+
+  function hasGolangciConfig(dir: string): boolean {
+    return GOLANGCI_CONFIGS.some((name) => fs.existsSync(path.join(dir, name)));
+  }
+
   function findLinterConfig(cwd: string): string | undefined {
     let currentDir = cwd;
     const root = path.parse(currentDir).root;
 
     while (true) {
-      if (fs.existsSync(path.join(currentDir, ".golangci.yaml"))) {
+      if (hasGolangciConfig(currentDir)) {
         return currentDir;
       }
 
@@ -36,13 +58,14 @@ export default function (pi: ExtensionAPI) {
     }
 
     try {
-      const gitRoot = child_process.execSync("git rev-parse --show-toplevel", {
-        cwd,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "ignore"],
-      }).trim();
+      const gitRoot = findGitRoot(cwd);
+      if (!gitRoot) return undefined;
 
-      const result = child_process.execSync("git ls-files --full-name '**/.golangci.yaml'", {
+      const escapedPatterns = GOLANGCI_CONFIGS
+        .map((name) => `'**/${name}'`)
+        .join(" ");
+
+      const result = child_process.execSync(`git ls-files --full-name ${escapedPatterns}`, {
         cwd,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
@@ -63,6 +86,32 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   }
 
+  function findAllGoModules(cwd: string): string[] {
+    const gitRoot = findGitRoot(cwd) || cwd;
+    const modules = new Set<string>();
+
+    if (fs.existsSync(path.join(gitRoot, "go.mod"))) {
+      modules.add(gitRoot);
+    }
+
+    try {
+      const result = child_process.execSync("git ls-files --full-name '**/go.mod'", {
+        cwd: gitRoot,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+
+      for (const line of result.split(/\r?\n/)) {
+        const relPath = line.trim();
+        if (!relPath) continue;
+        modules.add(path.join(gitRoot, path.dirname(relPath)));
+      }
+    } catch {
+    }
+
+    return Array.from(modules).sort();
+  }
+
   function updateStatus(): void {
     if (!statusUpdateFn) return;
     statusUpdateFn("golangci-lint", `${YELLOW}golangci-lint${RESET}`);
@@ -72,43 +121,15 @@ export default function (pi: ExtensionAPI) {
     return path.extname(filePath).toLowerCase() === ".go";
   }
 
-  /**
-   * Find the nearest go.mod file by traversing up from the given file path.
-   * Returns the directory containing go.mod, or undefined if not found.
-   */
-  function findNearestGoMod(filePath: string): string | undefined {
-    let currentDir = path.dirname(filePath);
-    const root = path.parse(currentDir).root;
-
-    while (currentDir !== root) {
-      if (fs.existsSync(path.join(currentDir, "go.mod"))) {
-        return currentDir;
-      }
-      currentDir = path.dirname(currentDir);
-    }
-
-    // Check root as well
-    if (fs.existsSync(path.join(root, "go.mod"))) {
-      return root;
-    }
-
-    return undefined;
-  }
-
-  function runGolangciLint(filePath: string, cwd: string): { success: boolean; output: string; fixes: string[]; workingDir: string } {
+  function runGolangciLint(moduleRoot: string): { success: boolean; output: string; fixes: string[]; workingDir: string } {
     const fixes: string[] = [];
-    
-    // Check if golangci-lint is available
+
     try {
-      child_process.execSync("which golangci-lint", { stdio: "ignore", cwd });
+      child_process.execSync("which golangci-lint", { stdio: "ignore", cwd: moduleRoot });
     } catch {
-      return { success: false, output: "golangci-lint not found in PATH", fixes: [], workingDir: cwd };
+      return { success: false, output: "golangci-lint not found in PATH", fixes: [], workingDir: moduleRoot };
     }
 
-    // Find nearest go.mod from the file, fallback to cwd
-    const moduleRoot = findNearestGoMod(filePath) || cwd;
-
-    // Check if go.mod exists in the found directory
     if (!fs.existsSync(path.join(moduleRoot, "go.mod"))) {
       return { success: false, output: "go.mod not found", fixes: [], workingDir: moduleRoot };
     }
@@ -119,13 +140,12 @@ export default function (pi: ExtensionAPI) {
         {
           cwd: moduleRoot,
           encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024, // 10MB
+          maxBuffer: 10 * 1024 * 1024,
         }
       );
 
       return { success: true, output: result || "No fixes applied", fixes, workingDir: moduleRoot };
     } catch (error: any) {
-      // golangci-lint returns non-zero if there are errors, but --fix might still work
       if (error.stdout) {
         return { success: true, output: error.stdout as string, fixes, workingDir: moduleRoot };
       }
@@ -196,26 +216,19 @@ export default function (pi: ExtensionAPI) {
     if (touchedFiles.size === 0) return;
     if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 
-    const files = Array.from(touchedFiles);
     touchedFiles.clear();
 
-    const modules = new Map<string, string>();
-    for (const filePath of files) {
-      const moduleRoot = findNearestGoMod(filePath) || ctx.cwd;
-      if (!modules.has(moduleRoot)) {
-        modules.set(moduleRoot, filePath);
-      }
-    }
-
+    const modules = findAllGoModules(ctx.cwd);
     const outputs: string[] = [];
-    modules.forEach((filePath, moduleRoot) => {
-      const result = runGolangciLint(filePath, ctx.cwd);
+
+    for (const moduleRoot of modules) {
+      const result = runGolangciLint(moduleRoot);
 
       if (result.success && result.output !== "No fixes applied") {
         const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
         outputs.push(`Module: ${relModule}\n${result.output}`);
       }
-    });
+    }
 
     if (outputs.length) {
       pi.sendMessage({
