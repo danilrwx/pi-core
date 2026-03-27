@@ -86,30 +86,20 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   }
 
-  function findAllGoModules(cwd: string): string[] {
-    const gitRoot = findGitRoot(cwd) || cwd;
-    const modules = new Set<string>();
+  function findNearestGoMod(filePath: string): string | undefined {
+    let currentDir = path.dirname(filePath);
+    const root = path.parse(currentDir).root;
 
-    if (fs.existsSync(path.join(gitRoot, "go.mod"))) {
-      modules.add(gitRoot);
-    }
-
-    try {
-      const result = child_process.execSync("git ls-files --full-name '**/go.mod'", {
-        cwd: gitRoot,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "ignore"],
-      });
-
-      for (const line of result.split(/\r?\n/)) {
-        const relPath = line.trim();
-        if (!relPath) continue;
-        modules.add(path.join(gitRoot, path.dirname(relPath)));
+    while (true) {
+      if (fs.existsSync(path.join(currentDir, "go.mod"))) {
+        return currentDir;
       }
-    } catch {
+
+      if (currentDir === root) break;
+      currentDir = path.dirname(currentDir);
     }
 
-    return Array.from(modules).sort();
+    return undefined;
   }
 
   function updateStatus(): void {
@@ -216,12 +206,22 @@ export default function (pi: ExtensionAPI) {
     if (touchedFiles.size === 0) return;
     if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 
+    const files = Array.from(touchedFiles);
     touchedFiles.clear();
 
-    const modules = findAllGoModules(ctx.cwd);
+    const modules = new Set<string>();
+    for (const filePath of files) {
+      const moduleRoot = findNearestGoMod(filePath);
+      if (moduleRoot) {
+        modules.add(moduleRoot);
+      }
+    }
+
+    if (modules.size === 0) return;
+
     const outputs: string[] = [];
 
-    for (const moduleRoot of modules) {
+    for (const moduleRoot of Array.from(modules).sort()) {
       const result = runGolangciLint(moduleRoot);
 
       if (result.success && result.output !== "No fixes applied") {
