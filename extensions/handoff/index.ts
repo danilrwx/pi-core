@@ -184,7 +184,9 @@ async function performHandoff(
 		loader.onAbort = () => done(null);
 
 		const doGenerate = async () => {
-			const apiKey = await ctx.modelRegistry.getApiKey(ctx.model!);
+			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
+			if (!auth.ok) return null;
+			const { apiKey, headers } = auth;
 
 			const userMessage: Message = {
 				role: "user",
@@ -200,7 +202,7 @@ async function performHandoff(
 			const response = await complete(
 				ctx.model!,
 				{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-				{ apiKey, signal: loader.signal },
+				{ apiKey, headers, signal: loader.signal },
 			);
 
 			if (response.stopReason === "aborted") {
