@@ -17,11 +17,33 @@
  */
 
 import { complete, type Message } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry } from "@mariozechner/pi-coding-agent";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
-const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
+import { loadModeSpec } from "../lib/mode-utils.js";
+
+// Cross-session communication for command-path handoff.
+// When cmdCtx.newSession() replaces the session (0.65+), the old extension
+// instance is disposed and a new one is loaded. globalThis survives the
+// replacement, so we use a process-global symbol to pass the handoff prompt
+// from the old instance to the new one's session_start handler.
+const HANDOFF_GLOBAL_KEY = Symbol.for("pi-amplike-handoff-pending");
+type PendingHandoffGlobal = { prompt: string; options?: HandoffOptions } | null;
+function getPendingHandoffGlobal(): PendingHandoffGlobal {
+	return (globalThis as any)[HANDOFF_GLOBAL_KEY] ?? null;
+}
+function setPendingHandoffGlobal(data: PendingHandoffGlobal) {
+	if (data) {
+		(globalThis as any)[HANDOFF_GLOBAL_KEY] = data;
+	} else {
+		delete (globalThis as any)[HANDOFF_GLOBAL_KEY];
+	}
+}
+
+const CONTEXT_SUMMARY_SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
 1. Summarizes relevant context from the conversation (decisions made, approaches taken, key findings)
 2. Lists any relevant files that were discussed or modified
@@ -43,57 +65,53 @@ Files involved:
 ## Task
 [Clear description of what to do next based on user's goal]`;
 
+/**
+ * Generate a context summary by asking an LLM to distill the conversation
+ * into a focused prompt for a new session.
+ *
+ * @returns The generated summary text, or null if aborted.
+ */
+async function generateContextSummary(
+	model: any,
+	apiKey: string | undefined,
+	headers: Record<string, string> | undefined,
+	messages: AgentMessage[],
+	goal: string,
+	signal?: AbortSignal,
+): Promise<string | null> {
+	const conversationText = serializeConversation(convertToLlm(messages));
+
+	const userMessage: Message = {
+		role: "user",
+		content: [
+			{
+				type: "text",
+				text: `## Conversation History\n\n${conversationText}\n\n## User's Goal for New Thread\n\n${goal}`,
+			},
+		],
+		timestamp: Date.now(),
+	};
+
+	const response = await complete(
+		model,
+		{ systemPrompt: CONTEXT_SUMMARY_SYSTEM_PROMPT, messages: [userMessage] },
+		{ apiKey, headers, signal },
+	);
+
+	if (response.stopReason === "aborted") {
+		return null;
+	}
+
+	return response.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
+}
+
 type HandoffOptions = {
 	mode?: string;
 	model?: string;
 };
-
-/**
- * Load a mode spec from modes.json by name.
- * Returns the spec if found, or undefined.
- */
-async function loadModeSpec(
-	cwd: string,
-	modeName: string,
-): Promise<{ provider?: string; modelId?: string; thinkingLevel?: string } | undefined> {
-	const fsModule = await import("node:fs");
-	const pathModule = await import("node:path");
-	const osModule = await import("node:os");
-
-	const expandUser = (p: string) => {
-		if (p === "~") return osModule.homedir();
-		if (p.startsWith("~/")) return pathModule.join(osModule.homedir(), p.slice(2));
-		return p;
-	};
-
-	const agentDir = process.env.PI_CODING_AGENT_DIR
-		? expandUser(process.env.PI_CODING_AGENT_DIR)
-		: pathModule.join(osModule.homedir(), ".pi", "agent");
-
-	// Check project modes first, then global
-	const candidates = [
-		pathModule.join(cwd, ".pi", "modes.json"),
-		pathModule.join(agentDir, "modes.json"),
-	];
-
-	for (const modesPath of candidates) {
-		try {
-			const raw = fsModule.readFileSync(modesPath, "utf8");
-			const parsed = JSON.parse(raw);
-			if (parsed.modes && typeof parsed.modes === "object" && parsed.modes[modeName]) {
-				const spec = parsed.modes[modeName];
-				return {
-					provider: typeof spec.provider === "string" ? spec.provider : undefined,
-					modelId: typeof spec.modelId === "string" ? spec.modelId : undefined,
-					thinkingLevel: typeof spec.thinkingLevel === "string" ? spec.thinkingLevel : undefined,
-				};
-			}
-		} catch {
-			continue;
-		}
-	}
-	return undefined;
-}
 
 /**
  * Apply -mode and -model options after a session switch.
@@ -174,8 +192,6 @@ async function performHandoff(
 		return "No conversation to hand off.";
 	}
 
-	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
 	const currentSessionFile = ctx.sessionManager.getSessionFile();
 
 	// Generate the handoff prompt with loader UI
@@ -186,33 +202,7 @@ async function performHandoff(
 		const doGenerate = async () => {
 			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
 			if (!auth.ok) return null;
-			const { apiKey, headers } = auth;
-
-			const userMessage: Message = {
-				role: "user",
-				content: [
-					{
-						type: "text",
-						text: `## Conversation History\n\n${conversationText}\n\n## User's Goal for New Thread\n\n${goal}`,
-					},
-				],
-				timestamp: Date.now(),
-			};
-
-			const response = await complete(
-				ctx.model!,
-				{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-				{ apiKey, headers, signal: loader.signal },
-			);
-
-			if (response.stopReason === "aborted") {
-				return null;
-			}
-
-			return response.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("\n");
+			return generateContextSummary(ctx.model!, auth.apiKey, auth.headers, messages, goal, loader.signal);
 		};
 
 		doGenerate()
@@ -238,12 +228,20 @@ async function performHandoff(
 	}
 
 	if (!fromTool && "newSession" in ctx) {
-		// Command path: full reset via ctx.newSession()
+		// Command path: full session replacement via ctx.newSession().
+		// After newSession(), the runtime tears down this session and creates a
+		// new one with fresh extensions. Our `pi` reference becomes stale, so we
+		// stash the prompt on globalThis for the new instance's session_start
+		// handler to pick up and send.
 		const cmdCtx = ctx as ExtensionCommandContext;
+		setPendingHandoffGlobal({ prompt: finalPrompt, options });
 		const newSessionResult = await cmdCtx.newSession({ parentSession: currentSessionFile });
-		if (newSessionResult.cancelled) return;
-		await applyHandoffOptions(pi, ctx, options);
-		pi.sendUserMessage(finalPrompt);
+		if (newSessionResult.cancelled) {
+			setPendingHandoffGlobal(null);
+			return;
+		}
+		// Don't call pi.sendUserMessage() here — the old pi is dead after session
+		// replacement. The new session_start handler will send the prompt.
 	} else {
 		// Tool path: defer session switch to agent_end handler.
 		// We can't call ctx.newSession() from tool context (only ExtensionCommandContext
@@ -273,26 +271,30 @@ export default function (pi: ExtensionAPI) {
 	//
 	// WHY IS THIS SO COMPLICATED?
 	//
-	// The /handoff command path is simple: it has ExtensionCommandContext with
-	// ctx.newSession() which does a full agent state reset (agent.reset() +
-	// UI clear + queue reset + event emission). But the tool path only gets
-	// ExtensionContext, which lacks newSession().
+	// The /handoff command path uses ctx.newSession() which delegates to
+	// AgentSessionRuntime — a full session replacement that tears down the old
+	// session and creates a new one with fresh extensions. Because the old
+	// extension instance (and its `pi` reference) is disposed, we can't call
+	// pi.sendUserMessage() afterwards. Instead, we stash the prompt on
+	// globalThis and let the new instance's session_start handler send it.
 	//
-	// Simpler approaches don't work:
+	// The tool path only gets ExtensionContext, which lacks newSession(). It
+	// uses a low-level sessionManager.newSession() that doesn't replace the
+	// runtime, so the pi reference stays alive.
+	//
+	// Simpler approaches for the tool path don't work:
 	// - sendUserMessage("/new") doesn't expand slash commands
 	// - There's no public API to programmatically invoke commands from tool context
-	// - sessionManager.newSession() only switches the session file; it does NOT
-	//   clear agent.state.messages, so the LLM would still see the entire old
-	//   conversation
+	// - AgentSessionRuntime.newSession() can't be called while the agent loop
+	//   is running (it replaces the live session)
 	// - We can't call agent.reset() from tool context either
 	//
-	// The solution uses three coordinated event handlers:
+	// The solution uses coordinated event handlers:
 	//
-	// 1. agent_end: Defers the session switch until after the agent loop completes.
-	//    This ensures the tool_result is recorded in the old session first, and
-	//    avoids concurrent _runLoop instances. Uses sessionManager.newSession()
-	//    for the file switch, then setTimeout(() => sendUserMessage()) to start
-	//    the new session in the next macrotask.
+	// 1. agent_end: Defers the tool-path session switch until after the agent
+	//    loop completes. Uses the low-level sessionManager.newSession() for the
+	//    file switch, then setTimeout(() => sendUserMessage()) to start the new
+	//    session in the next macrotask.
 	//
 	// 2. context: Filters pre-handoff messages using a timestamp. Since we can't
 	//    call agent.reset(), old messages remain in agent.state.messages, but the
@@ -302,9 +304,11 @@ export default function (pi: ExtensionAPI) {
 	//    auto-compaction checks assistant usage tokens rather than the messages
 	//    array length.
 	//
-	// 3. session_switch: Clears the context filter when a proper session switch
-	//    occurs (e.g., /new), since those fully reset agent.state.messages and
-	//    our filter would incorrectly hide the new session's messages.
+	// 3. session_start: Clears the context filter when a new session starts
+	//    (e.g., /new, tree navigation, /switch), since those fully reset
+	//    agent.state.messages and our filter would incorrectly hide the new
+	//    session's messages. Also picks up the globalThis handoff prompt for
+	//    the command path.
 
 	// After the agent loop ends, perform the deferred session switch.
 	// At this point:
@@ -322,7 +326,8 @@ export default function (pi: ExtensionAPI) {
 		handoffTimestamp = Date.now();
 
 		// Low-level session switch: creates new session file, resets entries.
-		// This does NOT clear agent.state.messages (we handle that via context event).
+		// Unlike AgentSessionRuntime.newSession(), this does NOT replace the
+		// runtime or clear agent.state.messages (we handle that via context event).
 		(ctx.sessionManager as any).newSession({ parentSession });
 
 		// Defer sendUserMessage to the next macrotask to ensure the old agent
@@ -348,9 +353,10 @@ export default function (pi: ExtensionAPI) {
 	// - The session file only contains new-session entries (correct for
 	//   token/cost display and session persistence)
 	pi.on("context", (event) => {
-		if (handoffTimestamp === null) return;
+		const cutoff = handoffTimestamp;
+		if (cutoff === null) return;
 
-		const newMessages = event.messages.filter((m: any) => m.timestamp >= handoffTimestamp);
+		const newMessages = event.messages.filter((m: any) => m.timestamp >= cutoff);
 		if (newMessages.length > 0) {
 			return { messages: newMessages };
 		}
@@ -358,11 +364,23 @@ export default function (pi: ExtensionAPI) {
 		// but don't break things by returning empty messages
 	});
 
-	// When a proper session switch occurs (e.g., /new, tree navigation, /switch),
-	// agent.state.messages is fully reset by AgentSession.newSession(). Clear our
-	// filter so we don't interfere with the properly-reset state.
-	pi.on("session_switch", () => {
+	// When a new session starts (e.g., /new, tree navigation, /switch, resume),
+	// agent.state.messages is fully reset. Clear our context filter so we don't
+	// interfere with the properly-reset state.
+	//
+	// Also handles the command-path handoff: after cmdCtx.newSession() replaces
+	// the runtime, this NEW extension instance's session_start fires. We check
+	// globalThis for a pending prompt and send it.
+	pi.on("session_start", async (_event, ctx) => {
 		handoffTimestamp = null;
+
+		// Pick up command-path handoff prompt stashed by the old extension instance
+		const pending = getPendingHandoffGlobal();
+		if (pending) {
+			setPendingHandoffGlobal(null);
+			await applyHandoffOptions(pi, ctx, pending.options);
+			pi.sendUserMessage(pending.prompt);
+		}
 	});
 
 	// /handoff command
@@ -419,7 +437,32 @@ export default function (pi: ExtensionAPI) {
 			const error = await performHandoff(pi, ctx, params.goal, pendingHandoff, setPendingHandoff, true, hasOptions ? options : undefined);
 			return {
 				content: [{ type: "text", text: error ?? "Handoff initiated. The session will switch after the current turn completes." }],
+				details: { error: error ?? null },
 			};
+		},
+
+		renderCall(args, theme) {
+			const parts: string[] = [];
+
+			// Goal: show first ~5 lines, truncated
+			const goal = (args.goal as string) ?? "";
+			const goalLines = goal.split("\n");
+			const truncatedGoal = goalLines.length > 5
+				? goalLines.slice(0, 5).join("\n") + "\n" + theme.fg("dim", `… (${goalLines.length - 5} more lines)`)
+				: goal;
+
+			parts.push(theme.fg("toolTitle", theme.bold("Handoff ")));
+
+			if (args.mode) {
+				parts.push(theme.fg("accent", `-mode ${args.mode} `));
+			}
+			if (args.model) {
+				parts.push(theme.fg("accent", `-model ${args.model} `));
+			}
+
+			parts.push(theme.fg("muted", truncatedGoal));
+
+			return new Text(parts.join(""), 0, 0);
 		},
 	});
 }
