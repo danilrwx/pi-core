@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -20,10 +21,21 @@ function parseJsonPermissive(text: string): Record<string, any> | null {
   }
 }
 
+const DEFAULT_GLOBAL_CONFIG_SOURCE_PATH = fileURLToPath(new URL("./default-sandbox.json", import.meta.url));
+
 function readConfigFile(path: string): Record<string, any> | null {
   if (!existsSync(path)) return null;
   const content = readFileSync(path, "utf-8");
   return parseJsonPermissive(content);
+}
+
+export function ensureDefaultGlobalConfigFile(targetPath?: string): string {
+  const path = targetPath ?? join(homedir(), ".pi", "agent", "sandbox.json");
+  if (existsSync(path)) return path;
+
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, readFileSync(DEFAULT_GLOBAL_CONFIG_SOURCE_PATH, "utf-8"), "utf-8");
+  return path;
 }
 
 export function normalizeMode(value: unknown): SandboxMode | undefined {

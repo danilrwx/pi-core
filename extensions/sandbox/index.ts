@@ -6,6 +6,7 @@ import { isToolCallEventType, type BashOperations, createBashTool } from "@mario
 
 import {
   configPathForScope,
+  ensureDefaultGlobalConfigFile,
   getEffectivePaths,
   loadConfig,
   normalizeConfig,
@@ -407,6 +408,7 @@ export default function (pi: ExtensionAPI) {
     const flagMode = pi.getFlag("sandbox-mode") as string | undefined;
 
     sandboxUi = ctx.ui;
+    ensureDefaultGlobalConfigFile();
     config = loadConfig(ctx.cwd);
 
     if (noSandbox) {
