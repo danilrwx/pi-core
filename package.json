@@ -6,25 +6,17 @@
     "test": "node --import @mariozechner/jiti/register --test"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.42",
-    "@mariozechner/pi-ai": "^0.56.0",
-    "@mariozechner/pi-coding-agent": "^0.63.0",
-    "@mariozechner/pi-tui": "^0.56.0",
+    "@mariozechner/pi-ai": "^0.67.0",
+    "@mariozechner/pi-coding-agent": "^0.67.0",
+    "@mariozechner/pi-tui": "^0.67.0",
+    "@mariozechner/pi-agent-core": "^0.67.0"
+  },
+  "devDependencies": {
     "@sinclair/typebox": "^0.34.48",
-    "pi-ask-user": "^0.3.0",
-    "pi-rtk-optimizer": "^0.4.0",
-    "@sinclair/typebox": "^0.34.33",
-    "vscode-languageserver-protocol": "^3.17.5",
-    "picomatch": "^4.0.3"
+    "vscode-languageserver-protocol": "^3.17.5"
   },
   "pi": {
-    "extensions": [
-      "extensions",
-      "node_modules/pi-ask-user",
-      "node_modules/pi-rtk-optimizer"
-    ],
-    "skills": [
-      "skills"
-    ]
+    "extensions": ["extensions"],
+    "skills": ["skills"]
   }
 }
