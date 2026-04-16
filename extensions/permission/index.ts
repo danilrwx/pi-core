@@ -131,6 +131,22 @@ function formatChoiceLabel(label: string, desc: string, isCurrent: boolean): str
   return isCurrent ? `${label}: ${desc} ✓` : `${label}: ${desc}`;
 }
 
+function formatCommandPreview(command: string, maxLength = 120): string {
+  const normalized = command.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function formatPermissionPrompt(levelLabel: string, command: string): string {
+  return `Requires ${levelLabel}\n${DIM}${formatCommandPreview(command)}${RESET}`;
+}
+
+function formatWritePrompt(action: string, filePath: string): string {
+  return `Requires Low\n${DIM}${action} ${filePath}${RESET}`;
+}
+
 function getPiModeFromArgv(argv: string[] = process.argv): string | undefined {
   const eq = argv.find((a) => a.startsWith("--mode="));
   if (eq) return eq.slice("--mode=".length);
@@ -472,7 +488,7 @@ Use /permission ${requiredLevel} or /permission-mode ask to enable prompts.`,
   }
 
   playPermissionSound();
-  const choice = await ctx.ui.select(`Requires ${requiredInfo.label}`, [
+  const choice = await ctx.ui.select(formatPermissionPrompt(requiredInfo.label, command), [
     UI_TEXT.allowOnce,
     `Allow all (${requiredInfo.label})`,
     UI_TEXT.cancel,
@@ -506,7 +522,7 @@ export async function handleWriteToolCall(
   if (LEVEL_INDEX[state.currentLevel] >= LEVEL_INDEX.low) return undefined;
 
   const action = toolName === "write" ? "Write" : "Edit";
-  const message = `Requires Low: ${action} ${filePath}`;
+  const message = formatWritePrompt(action, filePath);
 
   if (!hasInteractiveUI(ctx)) {
     return {
