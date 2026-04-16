@@ -6,17 +6,23 @@
     "test": "node --import @mariozechner/jiti/register --test"
   },
   "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.67.0",
     "@mariozechner/pi-ai": "^0.67.0",
     "@mariozechner/pi-coding-agent": "^0.67.0",
     "@mariozechner/pi-tui": "^0.67.0",
-    "@mariozechner/pi-agent-core": "^0.67.0"
+    "@types/shell-quote": "^1.7.5",
+    "shell-quote": "^1.8.3"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.48",
     "vscode-languageserver-protocol": "^3.17.5"
   },
   "pi": {
-    "extensions": ["extensions"],
-    "skills": ["skills"]
+    "extensions": [
+      "extensions"
+    ],
+    "skills": [
+      "skills"
+    ]
   }
 }
