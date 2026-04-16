@@ -89,6 +89,20 @@ const GREEN = "\x1b[32m";
 const CYAN = "\x1b[36m";
 const DIM = "\x1b[2m";
 
+const UI_TEXT = {
+  statusIcon: "🔒",
+  dangerousIcon: "⚠️",
+  allowOnce: "Allow once",
+  cancel: "Cancel",
+  sessionOnly: "Session only",
+  global: "Global (persists)",
+  saveLevelPrompt: "Save permission level to:",
+  saveModePrompt: "Save permission mode to:",
+  levelSelectPrompt: "Select permission level",
+  modeSelectPrompt: "Select permission mode",
+  saveScopePrompt: "Save to:",
+} as const;
+
 const LEVEL_COLORS: Record<PermissionLevel, string> = {
   minimal: RED,
   low: YELLOW,
@@ -100,7 +114,21 @@ const LEVEL_COLORS: Record<PermissionLevel, string> = {
 function getStatusText(level: PermissionLevel): string {
   const info = LEVEL_INFO[level];
   const color = LEVEL_COLORS[level];
-  return `${BOLD}${color}${info.label}${RESET} ${DIM}- ${info.desc}${RESET}`;
+  return `${UI_TEXT.statusIcon} ${BOLD}${color}${info.label}${RESET} ${DIM}· ${info.desc}${RESET}`;
+}
+
+function formatLevelSummary(level: PermissionLevel): string {
+  const info = LEVEL_INFO[level];
+  return `${info.label} · ${info.desc}`;
+}
+
+function formatModeSummary(mode: PermissionMode): string {
+  const info = PERMISSION_MODE_INFO[mode];
+  return `${info.label} · ${info.desc}`;
+}
+
+function formatChoiceLabel(label: string, desc: string, isCurrent: boolean): string {
+  return isCurrent ? `${label}: ${desc} ✓` : `${label}: ${desc}`;
 }
 
 function getPiModeFromArgv(argv: string[] = process.argv): string | undefined {
@@ -213,11 +241,11 @@ async function handleConfigSubcommand(
     return;
   }
 
-  const help = `Usage: /permission config <action>
+  const help = `Permission config
 
-Actions:
-  show  - Display current configuration
-  reset - Reset to default configuration
+Usage:
+  /permission config show
+  /permission config reset
 
 Edit ~/.pi/agent/settings.json directly for full control:
 
@@ -256,14 +284,14 @@ export async function handlePermissionCommand(
     const newLevel = arg as PermissionLevel;
 
     if (hasInteractiveUI(ctx)) {
-      const scope = await ctx.ui.select("Save permission level to:", [
-        "Session only",
-        "Global (persists)",
+      const scope = await ctx.ui.select(UI_TEXT.saveLevelPrompt, [
+        UI_TEXT.sessionOnly,
+        UI_TEXT.global,
       ]);
       if (!scope) return;
 
-      setLevel(state, newLevel, scope === "Global (persists)", ctx);
-      const saveMsg = scope === "Global (persists)" ? " (saved globally)" : " (session only)";
+      setLevel(state, newLevel, scope === UI_TEXT.global, ctx);
+      const saveMsg = scope === UI_TEXT.global ? " (saved globally)" : " (session only)";
       ctx.ui.notify(`Permission: ${LEVEL_INFO[newLevel].label}${saveMsg}`, "info");
     } else {
       setLevel(state, newLevel, false, ctx);
@@ -273,31 +301,27 @@ export async function handlePermissionCommand(
   }
 
   if (!hasInteractiveUI(ctx)) {
-    ctx.ui.notify(
-      `Current permission: ${LEVEL_INFO[state.currentLevel].label} (${LEVEL_INFO[state.currentLevel].desc})`,
-      "info",
-    );
+    ctx.ui.notify(`Current permission: ${formatLevelSummary(state.currentLevel)}`, "info");
     return;
   }
 
   const options = LEVELS.map((level) => {
     const info = LEVEL_INFO[level];
-    const marker = level === state.currentLevel ? " ← current" : "";
-    return `${info.label}: ${info.desc}${marker}`;
+    return formatChoiceLabel(info.label, info.desc, level === state.currentLevel);
   });
 
-  const choice = await ctx.ui.select("Select permission level", options);
+  const choice = await ctx.ui.select(UI_TEXT.levelSelectPrompt, options);
   if (!choice) return;
 
   const selectedLabel = choice.split(":")[0].trim();
   const newLevel = LEVELS.find((l) => LEVEL_INFO[l].label === selectedLabel);
   if (!newLevel || newLevel === state.currentLevel) return;
 
-  const scope = await ctx.ui.select("Save to:", ["Session only", "Global (persists)"]);
+  const scope = await ctx.ui.select(UI_TEXT.saveScopePrompt, [UI_TEXT.sessionOnly, UI_TEXT.global]);
   if (!scope) return;
 
-  setLevel(state, newLevel, scope === "Global (persists)", ctx);
-  const saveMsg = scope === "Global (persists)" ? " (saved globally)" : " (session only)";
+  setLevel(state, newLevel, scope === UI_TEXT.global, ctx);
+  const saveMsg = scope === UI_TEXT.global ? " (saved globally)" : " (session only)";
   ctx.ui.notify(`Permission: ${LEVEL_INFO[newLevel].label}${saveMsg}`, "info");
 }
 
@@ -312,14 +336,14 @@ export async function handlePermissionModeCommand(
     const newMode = arg as PermissionMode;
 
     if (hasInteractiveUI(ctx)) {
-      const scope = await ctx.ui.select("Save permission mode to:", [
-        "Session only",
-        "Global (persists)",
+      const scope = await ctx.ui.select(UI_TEXT.saveModePrompt, [
+        UI_TEXT.sessionOnly,
+        UI_TEXT.global,
       ]);
       if (!scope) return;
 
-      setMode(state, newMode, scope === "Global (persists)", ctx);
-      const saveMsg = scope === "Global (persists)" ? " (saved globally)" : " (session only)";
+      setMode(state, newMode, scope === UI_TEXT.global, ctx);
+      const saveMsg = scope === UI_TEXT.global ? " (saved globally)" : " (session only)";
       ctx.ui.notify(`Permission mode: ${PERMISSION_MODE_INFO[newMode].label}${saveMsg}`, "info");
     } else {
       setMode(state, newMode, false, ctx);
@@ -329,31 +353,27 @@ export async function handlePermissionModeCommand(
   }
 
   if (!hasInteractiveUI(ctx)) {
-    ctx.ui.notify(
-      `Current permission mode: ${PERMISSION_MODE_INFO[state.permissionMode].label} (${PERMISSION_MODE_INFO[state.permissionMode].desc})`,
-      "info",
-    );
+    ctx.ui.notify(`Current permission mode: ${formatModeSummary(state.permissionMode)}`, "info");
     return;
   }
 
   const options = PERMISSION_MODES.map((mode) => {
     const info = PERMISSION_MODE_INFO[mode];
-    const marker = mode === state.permissionMode ? " ← current" : "";
-    return `${info.label}: ${info.desc}${marker}`;
+    return formatChoiceLabel(info.label, info.desc, mode === state.permissionMode);
   });
 
-  const choice = await ctx.ui.select("Select permission mode", options);
+  const choice = await ctx.ui.select(UI_TEXT.modeSelectPrompt, options);
   if (!choice) return;
 
   const selectedLabel = choice.split(":")[0].trim();
   const newMode = PERMISSION_MODES.find((m) => PERMISSION_MODE_INFO[m].label === selectedLabel);
   if (!newMode || newMode === state.permissionMode) return;
 
-  const scope = await ctx.ui.select("Save to:", ["Session only", "Global (persists)"]);
+  const scope = await ctx.ui.select(UI_TEXT.saveScopePrompt, [UI_TEXT.sessionOnly, UI_TEXT.global]);
   if (!scope) return;
 
-  setMode(state, newMode, scope === "Global (persists)", ctx);
-  const saveMsg = scope === "Global (persists)" ? " (saved globally)" : " (session only)";
+  setMode(state, newMode, scope === UI_TEXT.global, ctx);
+  const saveMsg = scope === UI_TEXT.global ? " (saved globally)" : " (session only)";
   ctx.ui.notify(`Permission mode: ${PERMISSION_MODE_INFO[newMode].label}${saveMsg}`, "info");
 }
 
@@ -382,7 +402,7 @@ export function handleSessionStart(state: PermissionState, ctx: any): void {
     if (state.currentLevel === "bypassed") {
       ctx.ui.notify("⚠️ Permission bypassed - all checks disabled!", "warning");
     } else if (!isQuietMode(ctx)) {
-      ctx.ui.notify(`Permission: ${LEVEL_INFO[state.currentLevel].label} (use /permission to change)`, "info");
+      ctx.ui.notify(`Permission: ${formatLevelSummary(state.currentLevel)} (use /permission to change)`, "info");
     }
     if (state.permissionMode === "block") {
       ctx.ui.notify("Permission mode: Block (use /permission-mode to change)", "info");
@@ -417,9 +437,9 @@ Use /permission-mode ask to enable confirmations.`,
     }
 
     playPermissionSound();
-    const choice = await ctx.ui.select("⚠️ Dangerous command", ["Allow once", "Cancel"]);
+    const choice = await ctx.ui.select(`${UI_TEXT.dangerousIcon} Dangerous command`, [UI_TEXT.allowOnce, UI_TEXT.cancel]);
 
-    if (choice !== "Allow once") {
+    if (choice !== UI_TEXT.allowOnce) {
       return { block: true, reason: "Cancelled" };
     }
     return undefined;
@@ -453,12 +473,12 @@ Use /permission ${requiredLevel} or /permission-mode ask to enable prompts.`,
 
   playPermissionSound();
   const choice = await ctx.ui.select(`Requires ${requiredInfo.label}`, [
-    "Allow once",
+    UI_TEXT.allowOnce,
     `Allow all (${requiredInfo.label})`,
-    "Cancel",
+    UI_TEXT.cancel,
   ]);
 
-  if (choice === "Allow once") return undefined;
+  if (choice === UI_TEXT.allowOnce) return undefined;
 
   if (choice === `Allow all (${requiredInfo.label})`) {
     setLevel(state, requiredLevel, true, ctx);
@@ -507,9 +527,9 @@ Use /permission low or /permission-mode ask to enable prompts.`,
   }
 
   playPermissionSound();
-  const choice = await ctx.ui.select(message, ["Allow once", "Allow all (Low)", "Cancel"]);
+  const choice = await ctx.ui.select(message, [UI_TEXT.allowOnce, "Allow all (Low)", UI_TEXT.cancel]);
 
-  if (choice === "Allow once") return undefined;
+  if (choice === UI_TEXT.allowOnce) return undefined;
 
   if (choice === "Allow all (Low)") {
     setLevel(state, "low", true, ctx);
