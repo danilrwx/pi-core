@@ -102,9 +102,9 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   }
 
-  function updateStatus(): void {
+  function updateStatus(text = `${YELLOW}golangci-lint${RESET}`): void {
     if (!statusUpdateFn) return;
-    statusUpdateFn("golangci-lint", `${YELLOW}golangci-lint${RESET}`);
+    statusUpdateFn("golangci-lint", text);
   }
 
   function isGoFile(filePath: string): boolean {
@@ -182,10 +182,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => {
     if (!isActive) return;
     if (touchedFiles.size === 0) return;
-    if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 
     const files = Array.from(touchedFiles);
     touchedFiles.clear();
+    updateStatus(`${YELLOW}golangci-lint running${RESET}`);
 
     const modules = new Set<string>();
     for (const filePath of files) {
@@ -195,7 +195,17 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    if (modules.size === 0) return;
+    if (modules.size === 0) {
+      updateStatus();
+      pi.sendMessage({
+        customType: "golangci-lint-result",
+        content: "golangci-lint skipped: no go.mod found for changed Go files",
+        display: true,
+      }, {
+        deliverAs: "followUp",
+      });
+      return;
+    }
 
     const outputs: string[] = [];
     const silentOutputs: string[] = [];
@@ -217,6 +227,8 @@ export default function (pi: ExtensionAPI) {
       silentOutputs.push(`Module: ${relModule}\ngolangci-lint completed with no output`);
     }
 
+    updateStatus();
+
     if (outputs.length) {
       pi.sendMessage({
         customType: "golangci-lint-result",
@@ -234,6 +246,8 @@ export default function (pi: ExtensionAPI) {
         customType: "golangci-lint-result",
         content: silentOutputs.join("\n\n"),
         display: true,
+      }, {
+        deliverAs: "followUp",
       });
     }
   });
@@ -247,5 +261,6 @@ export default function (pi: ExtensionAPI) {
 
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.cwd, filePath);
     touchedFiles.add(absPath);
+    updateStatus(`${YELLOW}golangci-lint pending${RESET}`);
   });
 }
