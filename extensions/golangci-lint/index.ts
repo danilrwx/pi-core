@@ -155,17 +155,6 @@ export default function (pi: ExtensionAPI) {
     updateStatus();
   });
 
-  pi.on("session_switch", async (_event, ctx) => {
-    const moduleRoot = findLinterConfig(ctx.cwd);
-    isActive = !!moduleRoot;
-
-    if (!isActive) {
-      statusUpdateFn?.("golangci-lint", undefined);
-      return;
-    }
-
-    updateStatus();
-  });
 
   pi.on("session_tree", async (_event, ctx) => {
     const moduleRoot = findLinterConfig(ctx.cwd);
@@ -179,17 +168,6 @@ export default function (pi: ExtensionAPI) {
     updateStatus();
   });
 
-  pi.on("session_fork", async (_event, ctx) => {
-    const moduleRoot = findLinterConfig(ctx.cwd);
-    isActive = !!moduleRoot;
-
-    if (!isActive) {
-      statusUpdateFn?.("golangci-lint", undefined);
-      return;
-    }
-
-    updateStatus();
-  });
 
   pi.on("session_shutdown", async () => {
     touchedFiles.clear();
@@ -220,14 +198,23 @@ export default function (pi: ExtensionAPI) {
     if (modules.size === 0) return;
 
     const outputs: string[] = [];
+    const silentOutputs: string[] = [];
 
     for (const moduleRoot of Array.from(modules).sort()) {
       const result = runGolangciLint(moduleRoot);
+      const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
 
-      if (result.success && result.output !== "No fixes applied") {
-        const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
+      if (!result.success) {
         outputs.push(`Module: ${relModule}\n${result.output}`);
+        continue;
       }
+
+      if (result.output !== "No fixes applied") {
+        outputs.push(`Module: ${relModule}\n${result.output}`);
+        continue;
+      }
+
+      silentOutputs.push(`Module: ${relModule}\ngolangci-lint completed with no output`);
     }
 
     if (outputs.length) {
@@ -238,6 +225,15 @@ export default function (pi: ExtensionAPI) {
       }, {
         triggerTurn: true,
         deliverAs: "followUp",
+      });
+      return;
+    }
+
+    if (silentOutputs.length) {
+      pi.sendMessage({
+        customType: "golangci-lint-result",
+        content: silentOutputs.join("\n\n"),
+        display: true,
       });
     }
   });
