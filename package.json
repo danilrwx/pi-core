@@ -11,9 +11,7 @@
     "@mariozechner/pi-coding-agent": "^0.67.0",
     "@mariozechner/pi-tui": "^0.67.0",
     "@types/shell-quote": "^1.7.5",
-    "shell-quote": "^1.8.3"
-  },
-  "devDependencies": {
+    "shell-quote": "^1.8.3",
     "@sinclair/typebox": "^0.34.48",
     "vscode-languageserver-protocol": "^3.17.5"
   },
