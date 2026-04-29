@@ -2,7 +2,7 @@
  * golangci-lint Hook Extension for pi-coding-agent
  *
  * Automatically runs golangci-lint --fix for changed Go modules.
- * Runs after agent turns and at the end of the agent response.
+ * Collects changed Go modules during agent turns and runs once at the end of the agent response.
  *
  * Usage:
  *   pi install ./path/to/golangci-lint
@@ -26,9 +26,10 @@ export default function (pi: ExtensionAPI) {
   let statusUpdateFn: ((key: string, text: string | undefined) => void) | null = null;
   let isActive: boolean = false;
   let lintRunning: boolean = false;
-  let lintRequested: boolean = false;
 
   const touchedFiles: Set<string> = new Set();
+  const pendingModules: Set<string> = new Set();
+  const filesWithoutGoMod: Set<string> = new Set();
 
   function findGitRoot(cwd: string): string | undefined {
     try {
@@ -173,98 +174,120 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     touchedFiles.clear();
+    pendingModules.clear();
+    filesWithoutGoMod.clear();
     isActive = false;
     statusUpdateFn?.("golangci-lint", undefined);
   });
 
   pi.on("agent_start", async () => {
     touchedFiles.clear();
+    pendingModules.clear();
+    filesWithoutGoMod.clear();
   });
+
+  function collectPendingModules(): void {
+    if (touchedFiles.size === 0) return;
+
+    const files = Array.from(touchedFiles);
+    touchedFiles.clear();
+
+    for (const filePath of files) {
+      const moduleRoot = findNearestGoMod(filePath);
+      if (moduleRoot) {
+        pendingModules.add(moduleRoot);
+      } else {
+        filesWithoutGoMod.add(filePath);
+      }
+    }
+
+    if (pendingModules.size > 0 || filesWithoutGoMod.size > 0) {
+      updateStatus(`${YELLOW}golangci-lint pending${RESET}`);
+    }
+  }
 
   async function runPendingLint(ctx: ExtensionContext): Promise<void> {
     if (!isActive) return;
-    if (lintRunning) {
-      lintRequested = true;
-      return;
-    }
+    if (lintRunning) return;
+
+    collectPendingModules();
+
+    if (pendingModules.size === 0 && filesWithoutGoMod.size === 0) return;
 
     lintRunning = true;
+    const modules = Array.from(pendingModules).sort();
+    const missingGoModCount = filesWithoutGoMod.size;
+    pendingModules.clear();
+    filesWithoutGoMod.clear();
+    updateStatus(`${YELLOW}golangci-lint running${RESET}`);
 
     try {
-      do {
-        lintRequested = false;
-        if (touchedFiles.size === 0) break;
+      if (modules.length === 0) {
+        pi.sendMessage({
+          customType: "golangci-lint-result",
+          content: `golangci-lint skipped: no go.mod found for ${missingGoModCount} changed Go file(s)`,
+          display: true,
+        }, {
+          deliverAs: "followUp",
+        });
+        return;
+      }
 
-        const files = Array.from(touchedFiles);
-        touchedFiles.clear();
-        updateStatus(`${YELLOW}golangci-lint running${RESET}`);
+      const outputs: string[] = [];
+      const silentOutputs: string[] = [];
 
-        const modules = new Set<string>();
-        for (const filePath of files) {
-          const moduleRoot = findNearestGoMod(filePath);
-          if (moduleRoot) {
-            modules.add(moduleRoot);
-          }
-        }
+      for (const moduleRoot of modules) {
+        const result = runGolangciLint(moduleRoot);
+        const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
 
-        if (modules.size === 0) {
-          pi.sendMessage({
-            customType: "golangci-lint-result",
-            content: "golangci-lint skipped: no go.mod found for changed Go files",
-            display: true,
-          }, {
-            deliverAs: "followUp",
-          });
+        if (!result.success) {
+          outputs.push(`Module: ${relModule}\n${result.output}`);
           continue;
         }
 
-        const outputs: string[] = [];
-        const silentOutputs: string[] = [];
-
-        for (const moduleRoot of Array.from(modules).sort()) {
-          const result = runGolangciLint(moduleRoot);
-          const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
-
-          if (!result.success) {
-            outputs.push(`Module: ${relModule}\n${result.output}`);
-            continue;
-          }
-
-          if (result.output !== "No fixes applied") {
-            outputs.push(`Module: ${relModule}\n${result.output}`);
-            continue;
-          }
-
-          silentOutputs.push(`Module: ${relModule}\ngolangci-lint completed with no output`);
-        }
-
-        if (outputs.length) {
-          pi.sendMessage({
-            customType: "golangci-lint-result",
-            content: outputs.join("\n\n"),
-            display: true,
-          }, {
-            triggerTurn: true,
-            deliverAs: "followUp",
-          });
+        if (result.output !== "No fixes applied") {
+          outputs.push(`Module: ${relModule}\n${result.output}`);
           continue;
         }
 
-        if (silentOutputs.length) {
-          pi.sendMessage({
-            customType: "golangci-lint-result",
-            content: silentOutputs.join("\n\n"),
-            display: true,
-          }, {
-            deliverAs: "followUp",
-          });
-        }
-      } while (lintRequested || touchedFiles.size > 0);
+        silentOutputs.push(`Module: ${relModule}\ngolangci-lint completed with no output`);
+      }
+
+      if (missingGoModCount > 0) {
+        outputs.push(`golangci-lint skipped: no go.mod found for ${missingGoModCount} changed Go file(s)`);
+      }
+
+      if (outputs.length) {
+        pi.sendMessage({
+          customType: "golangci-lint-result",
+          content: outputs.join("\n\n"),
+          display: true,
+        }, {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        });
+        return;
+      }
+
+      if (silentOutputs.length) {
+        pi.sendMessage({
+          customType: "golangci-lint-result",
+          content: silentOutputs.join("\n\n"),
+          display: true,
+        }, {
+          deliverAs: "followUp",
+        });
+      }
     } finally {
       lintRunning = false;
       updateStatus();
     }
   }
+
+  pi.on("turn_end", async () => {
+    if (!isActive) return;
+    collectPendingModules();
+  });
 
   pi.on("agent_end", async (_event, ctx) => {
     await runPendingLint(ctx);
