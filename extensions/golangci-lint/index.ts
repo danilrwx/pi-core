@@ -26,6 +26,7 @@ export default function (pi: ExtensionAPI) {
   let statusUpdateFn: ((key: string, text: string | undefined) => void) | null = null;
   let isActive: boolean = false;
   let lintRunning: boolean = false;
+  let lintRequested: boolean = false;
 
   const touchedFiles: Set<string> = new Set();
 
@@ -182,84 +183,88 @@ export default function (pi: ExtensionAPI) {
 
   async function runPendingLint(ctx: ExtensionContext): Promise<void> {
     if (!isActive) return;
-    if (lintRunning) return;
-    if (touchedFiles.size === 0) return;
+    if (lintRunning) {
+      lintRequested = true;
+      return;
+    }
 
     lintRunning = true;
-    const files = Array.from(touchedFiles);
-    touchedFiles.clear();
-    updateStatus(`${YELLOW}golangci-lint running${RESET}`);
 
     try {
-      const modules = new Set<string>();
-      for (const filePath of files) {
-        const moduleRoot = findNearestGoMod(filePath);
-        if (moduleRoot) {
-          modules.add(moduleRoot);
+      do {
+        lintRequested = false;
+        if (touchedFiles.size === 0) break;
+
+        const files = Array.from(touchedFiles);
+        touchedFiles.clear();
+        updateStatus(`${YELLOW}golangci-lint running${RESET}`);
+
+        const modules = new Set<string>();
+        for (const filePath of files) {
+          const moduleRoot = findNearestGoMod(filePath);
+          if (moduleRoot) {
+            modules.add(moduleRoot);
+          }
         }
-      }
 
-      if (modules.size === 0) {
-        pi.sendMessage({
-          customType: "golangci-lint-result",
-          content: "golangci-lint skipped: no go.mod found for changed Go files",
-          display: true,
-        }, {
-          deliverAs: "followUp",
-        });
-        return;
-      }
-
-      const outputs: string[] = [];
-      const silentOutputs: string[] = [];
-
-      for (const moduleRoot of Array.from(modules).sort()) {
-        const result = runGolangciLint(moduleRoot);
-        const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
-
-        if (!result.success) {
-          outputs.push(`Module: ${relModule}\n${result.output}`);
+        if (modules.size === 0) {
+          pi.sendMessage({
+            customType: "golangci-lint-result",
+            content: "golangci-lint skipped: no go.mod found for changed Go files",
+            display: true,
+          }, {
+            deliverAs: "followUp",
+          });
           continue;
         }
 
-        if (result.output !== "No fixes applied") {
-          outputs.push(`Module: ${relModule}\n${result.output}`);
+        const outputs: string[] = [];
+        const silentOutputs: string[] = [];
+
+        for (const moduleRoot of Array.from(modules).sort()) {
+          const result = runGolangciLint(moduleRoot);
+          const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
+
+          if (!result.success) {
+            outputs.push(`Module: ${relModule}\n${result.output}`);
+            continue;
+          }
+
+          if (result.output !== "No fixes applied") {
+            outputs.push(`Module: ${relModule}\n${result.output}`);
+            continue;
+          }
+
+          silentOutputs.push(`Module: ${relModule}\ngolangci-lint completed with no output`);
+        }
+
+        if (outputs.length) {
+          pi.sendMessage({
+            customType: "golangci-lint-result",
+            content: outputs.join("\n\n"),
+            display: true,
+          }, {
+            triggerTurn: true,
+            deliverAs: "followUp",
+          });
           continue;
         }
 
-        silentOutputs.push(`Module: ${relModule}\ngolangci-lint completed with no output`);
-      }
-
-      if (outputs.length) {
-        pi.sendMessage({
-          customType: "golangci-lint-result",
-          content: outputs.join("\n\n"),
-          display: true,
-        }, {
-          triggerTurn: true,
-          deliverAs: "followUp",
-        });
-        return;
-      }
-
-      if (silentOutputs.length) {
-        pi.sendMessage({
-          customType: "golangci-lint-result",
-          content: silentOutputs.join("\n\n"),
-          display: true,
-        }, {
-          deliverAs: "followUp",
-        });
-      }
+        if (silentOutputs.length) {
+          pi.sendMessage({
+            customType: "golangci-lint-result",
+            content: silentOutputs.join("\n\n"),
+            display: true,
+          }, {
+            deliverAs: "followUp",
+          });
+        }
+      } while (lintRequested || touchedFiles.size > 0);
     } finally {
       lintRunning = false;
       updateStatus();
     }
   }
-
-  pi.on("turn_end", async (_event, ctx) => {
-    await runPendingLint(ctx);
-  });
 
   pi.on("agent_end", async (_event, ctx) => {
     await runPendingLint(ctx);
