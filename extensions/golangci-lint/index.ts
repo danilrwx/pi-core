@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as child_process from "node:child_process";
 import { type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 const YELLOW = "\x1b[33m", RESET = "\x1b[0m";
 const GOLANGCI_CONFIGS = [
@@ -28,6 +29,19 @@ type GolangciLintConfig = {
 };
 
 type GolangciLintScope = "project" | "global";
+
+type GolangciLintAction = "status" | "enable" | "disable";
+
+const COMMAND_ACTIONS: Array<{ value: GolangciLintAction; description: string }> = [
+  { value: "status", description: "Show current project/global hook state" },
+  { value: "enable", description: "Enable automatic golangci-lint --fix" },
+  { value: "disable", description: "Disable automatic golangci-lint --fix" },
+];
+
+const COMMAND_SCOPES: Array<{ value: GolangciLintScope; description: string }> = [
+  { value: "project", description: "Persist for current git repository" },
+  { value: "global", description: "Persist for all projects" },
+];
 
 function getAgentDir(): string {
   const envDir = process.env.PI_CODING_AGENT_DIR || process.env.TAU_CODING_AGENT_DIR;
@@ -68,6 +82,49 @@ function parseScope(raw: string | undefined): GolangciLintScope | undefined {
   if (["project", "local", "repo", "проект", "локально"].includes(value)) return "project";
   if (["global", "globally", "глобально"].includes(value)) return "global";
   return undefined;
+}
+
+function toAutocompleteItem(value: string, label: string, description: string): AutocompleteItem {
+  return { value, label, description };
+}
+
+function filterCompletionItems(items: AutocompleteItem[], prefix: string): AutocompleteItem[] | null {
+  const normalizedPrefix = prefix.toLowerCase();
+  const filtered = items.filter((item) => item.value.toLowerCase().startsWith(normalizedPrefix));
+  return filtered.length > 0 ? filtered : null;
+}
+
+function getGolangciLintArgumentCompletions(prefix: string): AutocompleteItem[] | null {
+  const hasTrailingSpace = /\s$/.test(prefix);
+  const parts = prefix.trim().split(/\s+/).filter(Boolean);
+
+  if (parts.length === 0) {
+    return COMMAND_ACTIONS.map((action) => toAutocompleteItem(action.value, action.value, action.description));
+  }
+
+  const actionPrefix = parts[0]?.toLowerCase() ?? "";
+  const action = COMMAND_ACTIONS.find((item) => item.value === actionPrefix)?.value;
+
+  if (!hasTrailingSpace && parts.length === 1) {
+    return filterCompletionItems(
+      COMMAND_ACTIONS.map((item) => toAutocompleteItem(item.value, item.value, item.description)),
+      actionPrefix,
+    );
+  }
+
+  if (action !== "enable" && action !== "disable") {
+    return null;
+  }
+
+  if (parts.length > 2) {
+    return null;
+  }
+
+  const scopePrefix = hasTrailingSpace ? "" : parts[1]?.toLowerCase() ?? "";
+  return filterCompletionItems(
+    COMMAND_SCOPES.map((scope) => toAutocompleteItem(`${action} ${scope.value}`, scope.value, scope.description)),
+    `${action} ${scopePrefix}`,
+  );
 }
 
 export default function (pi: ExtensionAPI) {
@@ -382,7 +439,8 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("golangci-lint", {
-    description: "View or change golangci-lint hook state (status|enable|disable [project|global])",
+    description: "Manage golangci-lint hook: status | enable|disable [project|global]",
+    getArgumentCompletions: getGolangciLintArgumentCompletions,
     handler: async (args, ctx) => {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const action = parts[0]?.toLowerCase();
