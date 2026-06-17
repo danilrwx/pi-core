@@ -153,11 +153,11 @@ export default function (pi: ExtensionAPI) {
   }
 
   function getProjectConfigPath(cwd: string): string {
-    return path.join(getProjectRoot(cwd), ".pi", "golangci-lint.json");
+    return path.join(getProjectRoot(cwd), ".pi", "extensions", "golangci-lint", "golangci-lint.json");
   }
 
   function getGlobalConfigPath(): string {
-    return path.join(getAgentDir(), "golangci-lint.json");
+    return path.join(getAgentDir(), "extensions", "golangci-lint", "golangci-lint.json");
   }
 
   function isLintEnabled(cwd: string): boolean {
