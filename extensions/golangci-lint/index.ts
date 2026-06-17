@@ -11,8 +11,9 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as child_process from "node:child_process";
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const YELLOW = "\x1b[33m", RESET = "\x1b[0m";
 const GOLANGCI_CONFIGS = [
@@ -21,6 +22,53 @@ const GOLANGCI_CONFIGS = [
   ".golangci.toml",
   ".golangci.json",
 ] as const;
+
+type GolangciLintConfig = {
+  enabled?: boolean;
+};
+
+type GolangciLintScope = "project" | "global";
+
+function getAgentDir(): string {
+  const envDir = process.env.PI_CODING_AGENT_DIR || process.env.TAU_CODING_AGENT_DIR;
+  if (envDir) {
+    if (envDir === "~") return os.homedir();
+    if (envDir.startsWith("~/")) return path.join(os.homedir(), envDir.slice(2));
+    return envDir;
+  }
+  return path.join(os.homedir(), ".pi", "agent");
+}
+
+function readJsonConfig(filePath: string): GolangciLintConfig {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as GolangciLintConfig;
+  } catch {
+    return {};
+  }
+}
+
+function writeJsonConfig(filePath: string, config: GolangciLintConfig): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+function isEnabledConfig(filePath: string): boolean {
+  return readJsonConfig(filePath).enabled !== false;
+}
+
+function setEnabledConfig(filePath: string, enabled: boolean): void {
+  const config = readJsonConfig(filePath);
+  config.enabled = enabled;
+  writeJsonConfig(filePath, config);
+}
+
+function parseScope(raw: string | undefined): GolangciLintScope | undefined {
+  if (!raw) return undefined;
+  const value = raw.toLowerCase();
+  if (["project", "local", "repo", "проект", "локально"].includes(value)) return "project";
+  if (["global", "globally", "глобально"].includes(value)) return "global";
+  return undefined;
+}
 
 export default function (pi: ExtensionAPI) {
   let statusUpdateFn: ((key: string, text: string | undefined) => void) | null = null;
@@ -41,6 +89,27 @@ export default function (pi: ExtensionAPI) {
     } catch {
       return undefined;
     }
+  }
+
+  function getProjectRoot(cwd: string): string {
+    return findGitRoot(cwd) ?? cwd;
+  }
+
+  function getProjectConfigPath(cwd: string): string {
+    return path.join(getProjectRoot(cwd), ".pi", "golangci-lint.json");
+  }
+
+  function getGlobalConfigPath(): string {
+    return path.join(getAgentDir(), "golangci-lint.json");
+  }
+
+  function isLintEnabled(cwd: string): boolean {
+    return isEnabledConfig(getGlobalConfigPath()) && isEnabledConfig(getProjectConfigPath(cwd));
+  }
+
+  function refreshActiveState(cwd: string): void {
+    const moduleRoot = findLinterConfig(cwd);
+    isActive = !!moduleRoot && isLintEnabled(cwd);
   }
 
   function hasGolangciConfig(dir: string): boolean {
@@ -147,21 +216,20 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
-    const moduleRoot = findLinterConfig(ctx.cwd);
-    isActive = !!moduleRoot;
+    refreshActiveState(ctx.cwd);
+    statusUpdateFn = ctx.hasUI && ctx.ui.setStatus ? ctx.ui.setStatus.bind(ctx.ui) : null;
 
     if (!isActive) {
+      statusUpdateFn?.("golangci-lint", undefined);
       return;
     }
 
-    statusUpdateFn = ctx.hasUI && ctx.ui.setStatus ? ctx.ui.setStatus.bind(ctx.ui) : null;
     updateStatus();
   });
 
 
   pi.on("session_tree", async (_event, ctx) => {
-    const moduleRoot = findLinterConfig(ctx.cwd);
-    isActive = !!moduleRoot;
+    refreshActiveState(ctx.cwd);
 
     if (!isActive) {
       statusUpdateFn?.("golangci-lint", undefined);
@@ -283,6 +351,73 @@ export default function (pi: ExtensionAPI) {
       updateStatus();
     }
   }
+
+  function formatStatus(cwd: string): string {
+    const hasConfig = !!findLinterConfig(cwd);
+    const globalEnabled = isEnabledConfig(getGlobalConfigPath());
+    const projectEnabled = isEnabledConfig(getProjectConfigPath(cwd));
+    const enabled = hasConfig && globalEnabled && projectEnabled;
+
+    return [
+      `golangci-lint: ${enabled ? "enabled" : "disabled"}`,
+      `project: ${projectEnabled ? "enabled" : "disabled"} (${getProjectConfigPath(cwd)})`,
+      `global: ${globalEnabled ? "enabled" : "disabled"} (${getGlobalConfigPath()})`,
+      `config: ${hasConfig ? "found" : "not found"}`,
+    ].join("\n");
+  }
+
+  function sendCommandResult(ctx: ExtensionCommandContext, content: string): void {
+    if (ctx.hasUI) {
+      ctx.ui.notify(content, "info");
+      return;
+    }
+
+    pi.sendMessage({
+      customType: "golangci-lint-command",
+      content,
+      display: true,
+    }, {
+      deliverAs: "followUp",
+    });
+  }
+
+  pi.registerCommand("golangci-lint", {
+    description: "View or change golangci-lint hook state (status|enable|disable [project|global])",
+    handler: async (args, ctx) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const action = parts[0]?.toLowerCase();
+      const scope = parseScope(parts[1]) ?? "project";
+
+      if (!action || ["status", "state", "show"].includes(action)) {
+        sendCommandResult(ctx, formatStatus(ctx.cwd));
+        return;
+      }
+
+      const enabledAliases = ["enable", "enabled", "on", "включить"];
+      const disabledAliases = ["disable", "disabled", "off", "выключить", "отключить"];
+      const enabled = enabledAliases.includes(action) ? true : disabledAliases.includes(action) ? false : undefined;
+
+      if (enabled === undefined || (parts[1] && !parseScope(parts[1]))) {
+        sendCommandResult(ctx, "Usage: /golangci-lint status | /golangci-lint enable|disable [project|global]");
+        return;
+      }
+
+      const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(ctx.cwd);
+      setEnabledConfig(configPath, enabled);
+      refreshActiveState(ctx.cwd);
+
+      if (!isActive) {
+        touchedFiles.clear();
+        pendingModules.clear();
+        filesWithoutGoMod.clear();
+        statusUpdateFn?.("golangci-lint", undefined);
+      } else {
+        updateStatus();
+      }
+
+      sendCommandResult(ctx, `golangci-lint ${enabled ? "enabled" : "disabled"} for ${scope}\n${formatStatus(ctx.cwd)}`);
+    },
+  });
 
   pi.on("turn_end", async () => {
     if (!isActive) return;
