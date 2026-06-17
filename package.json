@@ -6,10 +6,10 @@
     "test": "node --import jiti/register --test"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.75.3",
-    "@earendil-works/pi-ai": "^0.75.3",
-    "@earendil-works/pi-coding-agent": "^0.75.3",
-    "@earendil-works/pi-tui": "^0.75.3",
+    "@earendil-works/pi-agent-core": "^0.79.6",
+    "@earendil-works/pi-ai": "^0.79.6",
+    "@earendil-works/pi-coding-agent": "^0.79.6",
+    "@earendil-works/pi-tui": "^0.79.6",
     "@sinclair/typebox": "^0.34.49",
     "@types/shell-quote": "^1.7.5",
     "jiti": "^2.7.0",
