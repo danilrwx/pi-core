@@ -69,6 +69,38 @@ Pi уже сохраняет tail stdout/stderr bash при отмене и time
 обещание восстановить вывод произвольного MCP-инструмента, который сам его
 выбросил. Выполненные до отмены действия не откатываются.
 
+### Начало и конец длинного вывода (`bash-head-tail`)
+
+Когда bash-вывод обрезан до хвоста, расширение дочитывает начало полного лога
+(до 80 строк/12 KiB) и добавляет его перед хвостом с маркером
+`[... middle omitted; full output: …]`. Так ошибки в начале сборки и итог в конце
+оба попадают к модели. Полный лог не загружается в память целиком.
+
+### `index` — скелет файла
+
+Инструмент `index` возвращает компактную карту файла: imports, классы, функции,
+методы, типы и приблизительные диапазоны строк. Используется **до** `read`,
+чтобы читать только нужные куски. Поддерживает TS/JS, Python, Go, Rust, Java,
+Kotlin, Ruby, PHP, Lua, shell; для незнакомого языка честно говорит, что
+символы не распознаны. Это эвристика на регулярках, а не tree-sitter, поэтому
+диапазоны best-effort; для точных символов есть `lsp`.
+
+### Долговременная память (`memory`)
+
+Локальные заметки между сессиями: `memory` tool и `/memory`.
+Скоупы `project` (по cwd) и `global`; файлы `~/.pi/agent/memory/*.json`
+(можно переопределить `PI_MEMORY_DIR`), права `0600`. На старте хода
+релевантные заметки (до 5) попадают в отдельную секцию system prompt
+как **данные, не инструкции**; нерелевантные не инжектятся. Хранить секреты
+запрещено правилами инструмента. Никаких remote-запросов и embeddings.
+
+### Уведомления (`notify`)
+
+После `agent_settled` (когда pi действительно ждёт ввода, а не после каждого
+низкоуровневого retry) отправляется OSC 99 в Kitty или OSC 777 в остальных
+терминалах. `/notify on|off|status`; `PI_NOTIFY=0` выключает. Это полезно,
+когда агент работает в соседней вкладке tmux.
+
 ### AST permissions (`permission/shell-ast.ts`)
 
 Каждая shell-команда разбирается Tree-sitter Bash: pipelines, условия, функции,
@@ -375,8 +407,8 @@ selection. Инструмент `nvim_context` отдаёт то же модел
 рабочего дерева относительно базы, а не side-by-side diff-режим; путь bridge
 должен быть доступен процессу Neovim; binary/code-файлы больше лимитов
 пропускаются; живой тест сделан на NVIM 0.11.6 (show/snapshot), но автотесты используют
-поддельные RPC/tmux-бинарники. Живое «прыгать по изменениям во время применения
-дифов» пока не реализовано — это следующий шаг.
+поддельные RPC/tmux-бинарники; live-follow после edit/write и авто-подсказка
+ревью проверяются отдельными тестами.
 
 ## Подключение для разработки
 
@@ -395,7 +427,11 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/voice/index.ts",
     "/home/danil/w/pi-core/extensions/todo/index.ts",
     "/home/danil/w/pi-core/extensions/question/index.ts",
-    "/home/danil/w/pi-core/extensions/nvim/index.ts"
+    "/home/danil/w/pi-core/extensions/nvim/index.ts",
+    "/home/danil/w/pi-core/extensions/index/index.ts",
+    "/home/danil/w/pi-core/extensions/memory/index.ts",
+    "/home/danil/w/pi-core/extensions/notify/index.ts",
+    "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts"
   ]}
 ```
 
@@ -421,11 +457,13 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 Проверяются permission/session state, stop/cleanup, bounded logs, atomic saves,
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
-todo, question, tour (diff/dirty/context/discovery) и prefix completion (streaming, отмена, тело запроса на локальном HTTP-сервере).
+todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
+bash-head-tail и prefix completion (streaming, отмена, тело запроса на локальном HTTP-сервере).
 
 ## Что пока не перенесено
 
-Новый index, streaming/hold-to-talk диктовки и полноценная межагентная
-координация — отдельные следующие задачи. Swarm пока не добавляем.
+Subagents с изолированным контекстом, plan mode, git-checkpoints для откота
+кода, полноценная межагентная координация (swarm) и hold-to-talk диктовка —
+следующие задачи. `index` и память уже здесь; swarm пока не добавляем.
 
 Происхождение vendored-кода и лицензии: [THIRD_PARTY.md](THIRD_PARTY.md).
