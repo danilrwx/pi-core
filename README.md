@@ -84,14 +84,19 @@ WASM-грамматика лежит в `vendor/`, native build/install scripts 
 ### Изображения (`image-preview`)
 
 - Миниатюры локальных PNG/JPEG/GIF/WebP в черновике, включая вставленные из clipboard.
-- **Alt+I** / `/images` — галерея, стрелки переключают картинки; `d` удаляет
-  ссылку на вложение из черновика, Esc закрывает просмотр.
+- **Alt+I** / `/images` — галерея, стрелки переключают картинки; `o` (или Enter
+  без inline-режима) открывает выбранную картинку в отдельном окне Kitty,
+  `d` удаляет ссылку на вложение из черновика, Esc закрывает просмотр.
 - Последние изображения из tool results тоже доступны в галерее.
 - UI-превью не добавляет картинку в историю повторно, не меняет исходный файл
   и никогда не скачивает URLs. Обычно используются уменьшенные копии.
 - До 3 превью черновика, 8 недавних tool images; файлы до 8 MiB/40 MP.
-- Для графики нужен Kitty/iTerm2 protocol; иначе будет текстовый fallback.
-  Существующий чужой custom editor не заменяется: тогда доступна только галерея
+- Для inline-графики нужен Kitty/iTerm2 protocol. **Внутри tmux pi-tui
+  намеренно отключает inline images**, поэтому там показывается текстовый
+  fallback, а `o` открывает картинку в отдельном окне Kitty через
+  `kitty +kitten icat` (вне Kitty — через `xdg-open`). Это надёжнее, чем
+  надеяться на passthrough, который tmux не поддерживает для Kitty graphics.
+- Существующий чужой custom editor не заменяется: тогда доступна только галерея
   tool images. JPEG/WebP конвертирует штатный transcoder pi.
 
 ### Изменение прочитанного файла (`read-watch`)
@@ -268,8 +273,11 @@ diff в чат:
 `Tour 3/12`, а на последнем стопе — указание спросить пользователя через
 инструмент `question` («всё ок / что поправить»).
 
-Свой минимальный RPC-мост (`client.lua` + `bridge.lua`) не зависит от duet:
-клиент подключается к сокету `nvim --listen`, выполняет bridge внутри Neovim и
+Мост **один**: `extensions/nvim-tour` (`client.lua` + `bridge.lua`) не зависит от
+duet и обслуживает всё — тур, комментарии, `propose_change`, `show`,
+`selection`, `nvim_context`, live-follow и `/nvim status|save`. Старое расширение
+`duet/pi/editor.ts` с командой `/nvim-status` из конфига убрано. Клиент
+подключается к сокету `nvim --listen`, выполняет bridge внутри Neovim и
 поддерживает `status`/`show`/`snapshot`. Сокет ищется в `PI_NVIM_SOCKET`,
 `DUET_NVIM_SOCKET`, затем `NVIM_LISTEN_ADDRESS`.
 

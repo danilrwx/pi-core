@@ -1,5 +1,10 @@
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Image, Text, matchesKey } from "@earendil-works/pi-tui";
+import { Container, Image, Text, getCapabilities, matchesKey } from "@earendil-works/pi-tui";
 import { imageReferences, previewData, previewFile, removeReference, type PreviewImage } from "./images.js";
 
 export default function imagePreview(pi: ExtensionAPI) {
@@ -10,6 +15,29 @@ export default function imagePreview(pi: ExtensionAPI) {
   let epoch = 0;
   let lastSignature = "", loadingSignature: string | undefined;
   let ownFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
+  let warnedInline = false;
+
+  function inlineImages(): boolean { return Boolean(getCapabilities().images); }
+
+  function external(path: string) {
+    const kitty = Boolean(process.env.KITTY_WINDOW_ID) || /kitty/i.test(process.env.TERM_PROGRAM ?? "") || /kitty/i.test(process.env.TERM ?? "");
+    const fallback = () => {
+      const child = spawn("xdg-open", [path], { detached: true, stdio: "ignore" });
+      child.on("error", () => {}); child.unref();
+    };
+    if (!kitty) { fallback(); return; }
+    const env = { ...process.env }; delete env.TMUX; delete env.TMUX_PANE;
+    const child = spawn("kitty", ["--title", `pi: ${basename(path)}`, "sh", "-c", 'exec kitty +kitten icat --hold "$1"', "sh", path], { detached: true, stdio: "ignore", env });
+    child.on("error", fallback);
+    child.unref();
+  }
+  async function openExternal(item: PreviewImage) {
+    if (item.path) { external(item.path); return; }
+    const ext = item.mimeType === "image/png" ? ".png" : item.mimeType === "image/jpeg" ? ".jpg" : item.mimeType === "image/gif" ? ".gif" : ".webp";
+    const path = join(tmpdir(), `pi-image-${randomUUID()}${ext}`);
+    await writeFile(path, Buffer.from(item.data, "base64"), { mode: 0o600 });
+    external(path);
+  }
 
   function widget() {
     if (!ctx || ctx.mode !== "tui") return;
@@ -17,7 +45,7 @@ export default function imagePreview(pi: ExtensionAPI) {
     if (!items.length) { ctx.ui.setWidget("image-preview", undefined); return; }
     ctx.ui.setWidget("image-preview", (_tui, theme) => {
       const box = new Container();
-      box.addChild(new Text(theme.fg("muted", `${draft.length ? "Attachments" : "Latest tool image"} · Alt+I view / remove`), 0, 0));
+      box.addChild(new Text(theme.fg("muted", `${draft.length ? "Attachments" : "Latest tool image"} · Alt+I view / remove${inlineImages() ? "" : " · inline off (tmux)"}`), 0, 0));
       for (const item of items) {
         box.addChild(new Text(item.label, 0, 0));
         box.addChild(new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 28, maxHeightCells: 5, filename: item.label }));
@@ -68,12 +96,15 @@ export default function imagePreview(pi: ExtensionAPI) {
             chosen = item;
             shown = new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 90, maxHeightCells: 25, filename: item.label });
           }
-          return [...new Text(`${index + 1}/${items.length} · ${item.label}\n←/→ switch · d remove draft attachment · Esc close`, 0, 0).render(width), ...shown!.render(width)];
+          const hint = inlineImages() ? "" : " · o open in Kitty";
+          return [...new Text(`${index + 1}/${items.length} · ${item.label}\n←/→ switch · d remove draft attachment${hint} · Esc close`, 0, 0).render(width), ...shown!.render(width)];
         },
         handleInput(data) {
           if (matchesKey(data, "escape") || data === "q") { done(); return; }
-          if (matchesKey(data, "right")) index = (index + 1) % (draft.length + returned.length);
+          const items = [...draft, ...returned];
+          if (matchesKey(data, "right")) index = (index + 1) % items.length;
           if (matchesKey(data, "left")) index = Math.max(0, index - 1);
+          if (data === "o" || (matchesKey(data, "return") && !inlineImages())) { const item = items[index]; if (item) void openExternal(item); }
           if (data === "d") {
             const item = [...draft, ...returned][index];
             if (item?.path && draft.includes(item) && editor) {
@@ -92,6 +123,10 @@ export default function imagePreview(pi: ExtensionAPI) {
   pi.on("session_start", (_event, context) => {
     ctx = context;
     if (context.mode !== "tui") return;
+    if (!inlineImages() && !warnedInline) {
+      warnedInline = true;
+      context.ui.notify("Inline images are unavailable inside tmux. Alt+I → o opens the selected image in a Kitty window.", "info");
+    }
     if (context.ui.getEditorComponent()) {
       context.ui.notify("Image gallery is available, but automatic draft previews are disabled to preserve another custom editor.", "info");
       return;

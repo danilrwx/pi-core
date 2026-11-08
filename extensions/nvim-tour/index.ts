@@ -323,6 +323,42 @@ export default function nvimTour(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "show",
+    label: "Show in Neovim",
+    readOnly: true,
+    description: "Open and highlight an existing project file in the user's connected Neovim. Use when explaining code or asked to show where something happens. Returns the actual displayed buffer text, including unsaved edits. Does not write files. Lines are 1-based inclusive, at most 200 lines and 32 KiB.",
+    promptSnippet: "Show a code range in the user's Neovim before explaining it",
+    promptGuidelines: [
+      "When asked to show or explain code visually, call show before explaining that specific range. Do not claim code is displayed if show failed. Prefer one focused range at a time; do not race multiple show calls. Use selection for questions about highlighted code.",
+    ],
+    parameters: Type.Object({
+      file: Type.String({ description: "Existing file inside the current project; relative paths resolve against the Pi working directory" }),
+      from_line: Type.Integer({ minimum: 1 }),
+      to_line: Type.Integer({ minimum: 1 }),
+    }, { additionalProperties: false }),
+    async execute(_id, params, _signal, _update, context) {
+      if (!hasNvim(context.cwd)) return { content: [{ type: "text" as const, text: "Error: Neovim is not connected. Load nvim/pi-ide.lua in your init.lua, or set PI_NVIM_SOCKET." }], details: {}, isError: true };
+      const result = await nvimRequest<NvimResult>({
+        method: "show", file: resolve(context.cwd, params.file), from_line: params.from_line, to_line: params.to_line, root: context.cwd,
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: result };
+    },
+  });
+
+  pi.registerTool({
+    name: "selection",
+    label: "Neovim selection",
+    readOnly: true,
+    description: "Read the user's current or last visual selection from connected Neovim, including unsaved text. Returns file, cursor and selection byte coordinates (1-based), mode, changedtick and truncation. Last selection is preserved across focus changes; stale selections fail. Files must be inside the current Pi project. No file writes.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute(_id, _params, _signal, _update, context) {
+      if (!hasNvim(context.cwd)) return { content: [{ type: "text" as const, text: "Error: Neovim is not connected. Load nvim/pi-ide.lua in your init.lua, or set PI_NVIM_SOCKET." }], details: {}, isError: true };
+      const result = await nvimRequest<Record<string, unknown>>({ method: "selection.latest", root: context.cwd });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: result };
+    },
+  });
+
+  pi.registerTool({
     name: "comment_reply",
     label: "Reply to comment",
     executionMode: "sequential",

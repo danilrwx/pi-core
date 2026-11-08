@@ -192,3 +192,25 @@ test("agent_end suggests one review after a large change set", async () => {
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
   }
 });
+
+test("show and selection tools use the unified bridge", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-ide-tools-"));
+  const fake = await fakeNvim(`if (req.method === "show") result = { file: req.file, from_line: req.from_line, to_line: req.to_line, text: "two\\nthree" }; else if (req.method === "selection.latest") result = { available: true, file: req.root + "/a.ts", start: { line: 2 }, finish: { line: 4 }, text: "let x = 1;", stale: false };`);
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
+  process.env.PI_NVIM_SOCKET = "/tmp/fake.sock"; process.env.PI_TOUR_NVIM_BIN = fake.bin;
+  try {
+    const h = harness();
+    const shown = await h.tools.get("show").execute("t", { file: "a.ts", from_line: 2, to_line: 4 }, undefined, undefined, { cwd });
+    assert.equal(shown.details.text, "two\nthree");
+    const selection = await h.tools.get("selection").execute("t", {}, undefined, undefined, { cwd });
+    assert.equal(selection.details.text, "let x = 1;");
+    const sent = await requests(fake.log);
+    assert.equal(sent[0].method, "show");
+    assert.equal(sent[0].file, join(cwd, "a.ts"));
+    assert.equal(sent[1].method, "selection.latest");
+    assert.equal(sent[1].root, cwd);
+  } finally {
+    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
+    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+  }
+});
