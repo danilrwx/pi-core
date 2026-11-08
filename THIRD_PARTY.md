@@ -8,6 +8,7 @@ carry notices. Keep this record, license files and regression tests when editing
 |---|---|---|---|
 | [GhabiX/pi-background-job](https://github.com/GhabiX/pi-background-job) | `08389a029beb721429db80bf2f58b44396aebc11` | `extensions/background-jobs/{core,events,index}.ts`, `test/background-job*.test.mjs` | Copyright 2026 GhabiX, [Apache-2.0](licenses/Apache-2.0-GhabiX.txt) |
 | [GhabiX/pi-btw-cached](https://github.com/GhabiX/pi-btw-cached) | `c7d9867b6d2f5efe69de69264f04b9cdfae0b55a` | `extensions/btw/index.ts`, `test/btw-host.test.mjs` | Copyright 2026 GhabiX, [Apache-2.0](licenses/Apache-2.0-GhabiX.txt) |
+| [1jehuang/jcode](https://github.com/1jehuang/jcode) | `2df610a7d821515a843996621cb890673b139e30` | `extensions/image-preview/kitty.ts` (diacritic table and tmux/Kitty envelope adapted) | Copyright 2025 Jeremy Huang, [MIT](licenses/MIT-jcode.txt) |
 
 Local changes:
 
@@ -37,7 +38,7 @@ The Neovim tour client/bridge, discovery lock files and diff/dirty/context
 features were informed by coder/claudecode.nvim (MIT) and its published PROTOCOL.md;
 no Lua or TypeScript code was copied. The Unix-socket transport is our own.
 
-The Neovim tour client/bridge (`extensions/nvim-tour/*.lua`) is written locally
+The Neovim tour client/bridge (`extensions/tour/*.lua`) is written locally
 as a minimal RPC shim; the duet bridge protocol informed it, but no Lua code was
 copied.
 
@@ -46,7 +47,9 @@ The `question` tool is adapted from Pi's official `questionnaire.ts` example
 dismissal, with no rpiv/third-party code copied.
 
 Partial-output labeling, read tracking, image preview UI and local voice integration
-are written locally. No audio models or STT executables are included/downloaded.
+are written locally. Kitty Unicode placeholders in `extensions/image-preview/kitty.ts`
+adapt jcode's table and DCS passthrough envelope (MIT); the surrounding pi-tui
+component and image selection are ours. No audio models or STT executables are included/downloaded.
 The Nari realtime WebSocket protocol was implemented from jcode's `nari.rs` as a
 protocol reference (jcode is MIT); no jcode code is copied. `ws` is a runtime
 dependency (MIT), not a vendored source copy.

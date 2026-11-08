@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, Image, Text, getCapabilities, matchesKey } from "@earendil-works/pi-tui";
 import { imageReferences, previewData, previewFile, removeReference, type PreviewImage } from "./images.js";
+import { KittyPlaceholderImage, kittyTmuxAvailable, kittyTmuxReason } from "./kitty.js";
 
 export default function imagePreview(pi: ExtensionAPI) {
   let ctx: ExtensionContext | undefined;
@@ -17,7 +18,7 @@ export default function imagePreview(pi: ExtensionAPI) {
   let ownFactory: ReturnType<ExtensionContext["ui"]["getEditorComponent"]>;
   let warnedInline = false;
 
-  function inlineImages(): boolean { return Boolean(getCapabilities().images); }
+  function inlineImages(): boolean { return Boolean(getCapabilities().images) || kittyTmuxAvailable(); }
 
   function external(path: string) {
     const kitty = Boolean(process.env.KITTY_WINDOW_ID) || /kitty/i.test(process.env.TERM_PROGRAM ?? "") || /kitty/i.test(process.env.TERM ?? "");
@@ -48,7 +49,9 @@ export default function imagePreview(pi: ExtensionAPI) {
       box.addChild(new Text(theme.fg("muted", `${draft.length ? "Attachments" : "Latest tool image"} · Alt+I view / remove${inlineImages() ? "" : " · inline off (tmux)"}`), 0, 0));
       for (const item of items) {
         box.addChild(new Text(item.label, 0, 0));
-        box.addChild(new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 28, maxHeightCells: 5, filename: item.label }));
+        box.addChild(kittyTmuxAvailable() && item.mimeType === "image/png"
+          ? new KittyPlaceholderImage(item, 28, 5)
+          : new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 28, maxHeightCells: 5, filename: item.label }));
       }
       return box;
     }, { placement: "aboveEditor" });
@@ -84,7 +87,7 @@ export default function imagePreview(pi: ExtensionAPI) {
     if (!draft.length && !returned.length) { context.ui.notify("No image previews yet. Paste an image, or read/generate one.", "info"); return; }
     await context.ui.custom<void>((tui, theme, _keys, done) => {
       let index = 0;
-      let shown: Image | undefined;
+      let shown: { render(width: number): string[]; invalidate(): void } | undefined;
       let chosen: PreviewImage | undefined;
       return {
         render(width) {
@@ -94,7 +97,9 @@ export default function imagePreview(pi: ExtensionAPI) {
           const item = items[index];
           if (chosen !== item) {
             chosen = item;
-            shown = new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 90, maxHeightCells: 25, filename: item.label });
+            shown = kittyTmuxAvailable() && item.mimeType === "image/png"
+              ? new KittyPlaceholderImage(item, 90, 25)
+              : new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 90, maxHeightCells: 25, filename: item.label });
           }
           const hint = inlineImages() ? "" : " · o open in Kitty";
           return [...new Text(`${index + 1}/${items.length} · ${item.label}\n←/→ switch · d remove draft attachment${hint} · Esc close`, 0, 0).render(width), ...shown!.render(width)];
@@ -125,7 +130,8 @@ export default function imagePreview(pi: ExtensionAPI) {
     if (context.mode !== "tui") return;
     if (!inlineImages() && !warnedInline) {
       warnedInline = true;
-      context.ui.notify("Inline images are unavailable inside tmux. Alt+I → o opens the selected image in a Kitty window.", "info");
+      const reason = kittyTmuxReason();
+      context.ui.notify(reason ? `Inline images unavailable: ${reason}. Alt+I → o opens the image externally.` : "Inline images are unavailable inside tmux. Alt+I → o opens the selected image in a Kitty window.", "info");
     }
     if (context.ui.getEditorComponent()) {
       context.ui.notify("Image gallery is available, but automatic draft previews are disabled to preserve another custom editor.", "info");

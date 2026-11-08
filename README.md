@@ -91,13 +91,16 @@ WASM-грамматика лежит в `vendor/`, native build/install scripts 
 - UI-превью не добавляет картинку в историю повторно, не меняет исходный файл
   и никогда не скачивает URLs. Обычно используются уменьшенные копии.
 - До 3 превью черновика, 8 недавних tool images; файлы до 8 MiB/40 MP.
-- Для inline-графики нужен Kitty/iTerm2 protocol. **Внутри tmux pi-tui
-  намеренно отключает inline images**, поэтому там показывается текстовый
-  fallback, а `o` открывает картинку в отдельном окне Kitty через
-  `kitty +kitten icat` (вне Kitty — через `xdg-open`). Это надёжнее, чем
-  надеяться на passthrough, который tmux не поддерживает для Kitty graphics.
+- **Внутри tmux** (Kitty, RGB, `allow-passthrough on`) картинки рисуются через
+  Kitty Unicode placeholders, как в jcode: PNG передаётся виртуальным placement
+  в DCS-passthrough, а в ячейки пишутся `U+10EEEE` с диакритиками строк/столбцов.
+  Это обычный текст, поэтому tmux его не ломает. В `.tmux.conf` добавлено
+  `set -g allow-passthrough on`.
+- Без Kitty/tmux-passthrough — текстовый fallback, а `o` открывает картинку
+  в отдельном окне Kitty через `kitty +kitten icat` (вне Kitty — `xdg-open`).
 - Существующий чужой custom editor не заменяется: тогда доступна только галерея
-  tool images. JPEG/WebP конвертирует штатный transcoder pi.
+  tool images. JPEG/WebP конвертирует штатный transcoder pi; placeholders
+  используются только для PNG (остальное — external fallback).
 
 ### Изменение прочитанного файла (`read-watch`)
 
@@ -247,7 +250,7 @@ endpoint** (`provider: deepseek` / `api.deepseek.com`, `api: openai-completions`
 удаляются, пробелы схлопываются); ответы не пишутся отдельным custom entry,
 поэтому вызов из codemode не оставит карточку в транскрипте.
 
-### Тур по изменениям в Neovim (`nvim-tour`)
+### Тур по изменениям в Neovim (`tour`)
 
 Когда правок много, модель проходит по ним в открытом Neovim, а не вываливает
 diff в чат:
@@ -273,7 +276,7 @@ diff в чат:
 `Tour 3/12`, а на последнем стопе — указание спросить пользователя через
 инструмент `question` («всё ок / что поправить»).
 
-Мост **один**: `extensions/nvim-tour` (`client.lua` + `bridge.lua`) не зависит от
+Мост **один**: `extensions/tour` (`client.lua` + `bridge.lua`) не зависит от
 duet и обслуживает всё — тур, комментарии, `propose_change`, `show`,
 `selection`, `nvim_context`, live-follow и `/nvim status|save`. Старое расширение
 `duet/pi/editor.ts` с командой `/nvim-status` из конфига убрано. Клиент
@@ -385,7 +388,7 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/voice/index.ts",
     "/home/danil/w/pi-core/extensions/todo/index.ts",
     "/home/danil/w/pi-core/extensions/question/index.ts",
-    "/home/danil/w/pi-core/extensions/nvim-tour/index.ts"
+    "/home/danil/w/pi-core/extensions/tour/index.ts"
   ]}
 ```
 
@@ -411,7 +414,7 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 Проверяются permission/session state, stop/cleanup, bounded logs, atomic saves,
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
-todo, question, nvim-tour (diff/dirty/context/discovery) и prefix completion (streaming, отмена, тело запроса на локальном HTTP-сервере).
+todo, question, tour (diff/dirty/context/discovery) и prefix completion (streaming, отмена, тело запроса на локальном HTTP-сервере).
 
 ## Что пока не перенесено
 

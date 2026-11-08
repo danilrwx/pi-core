@@ -42,3 +42,30 @@ test("draft image preview survives clipboard insertion and gallery removes only 
   } finally { hooks.get("session_shutdown")({}, ctx); }
   assert.equal(factory, undefined);
 });
+
+test("Kitty placeholder geometry encodes rows, columns and a truecolor id", async () => {
+  const { planKittyPlacement, kittyPlaceholderLines } = await jiti.import("../extensions/image-preview/kitty.ts");
+  const item = { data: tinyPng().toString("base64"), mimeType: "image/png", label: "shot.png" };
+  const placement = planKittyPlacement(item, 10, 5);
+  assert.ok(placement);
+  assert.ok(placement.cols >= 1 && placement.cols <= 10);
+  assert.ok(placement.rows >= 1 && placement.rows <= 5);
+  const lines = kittyPlaceholderLines(placement);
+  assert.equal(lines.length, placement.rows);
+  assert.match(lines[0], /\u{10EEEE}/u);
+  assert.match(lines[0], /\x1b\[38;2;\d+;\d+;\d+m/);
+  assert.equal(planKittyPlacement({ ...item, mimeType: "image/jpeg" }, 10, 5), undefined);
+});
+
+test("Kitty upload is a tmux DCS-wrapped virtual placement", async () => {
+  const { planKittyPlacement, kittyUploadPayload } = await jiti.import("../extensions/image-preview/kitty.ts");
+  const item = { data: tinyPng().toString("base64"), mimeType: "image/png", label: "shot.png" };
+  const placement = planKittyPlacement(item, 10, 5);
+  assert.ok(placement);
+  const payload = kittyUploadPayload(item, placement);
+  assert.ok(payload.startsWith("\x1bPtmux;"));
+  assert.ok(payload.endsWith("\x1b\\"));
+  assert.match(payload, new RegExp(`a=T,U=1,f=100,q=2,i=${placement.id},c=${placement.cols},r=${placement.rows}`));
+  assert.match(payload, /\x1b\x1b_G/);
+  assert.match(payload, /\x1b\x1b\\/);
+});

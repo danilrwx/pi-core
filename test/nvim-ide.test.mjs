@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { jiti } from "./host.mjs";
-const { discoverIde } = await jiti.import("../extensions/nvim-tour/discovery.ts");
-const { resolveEndpoint, nvimRequest } = await jiti.import("../extensions/nvim-tour/nvim.ts");
-const { openDiff } = await jiti.import("../extensions/nvim-tour/diff.ts");
-const { default: plugin } = await jiti.import("../extensions/nvim-tour/index.ts");
+const { discoverIde } = await jiti.import("../extensions/tour/discovery.ts");
+const { resolveEndpoint, nvimRequest } = await jiti.import("../extensions/tour/nvim.ts");
+const { openDiff } = await jiti.import("../extensions/tour/diff.ts");
+const { default: plugin } = await jiti.import("../extensions/tour/index.ts");
 
 async function fakeNvim(body) {
   const dir = await mkdtemp(join(tmpdir(), "pi-ide-bin-"));
