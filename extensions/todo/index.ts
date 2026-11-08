@@ -12,8 +12,10 @@ export default function todo(pi: ExtensionAPI) {
   let collapsed = false;
   let panel: TodoPanel | undefined;
   let ctx: ExtensionContext | undefined;
+  const clearPending = new Set<string>();
 
   const sessionId = () => ctx?.sessionManager.getSessionId();
+  const isTerminal = (todos: Todo[]) => todos.length > 0 && todos.every((todo) => todo.status === "completed" || todo.status === "cancelled");
   const current = () => {
     const id = sessionId();
     return id ? states.get(id) ?? [] : [];
@@ -35,6 +37,7 @@ export default function todo(pi: ExtensionAPI) {
     if (!id) return;
     states.set(id, todos);
     activeSession = id;
+    if (!todos.length) clearPending.delete(id);
     if (save) pi.appendEntry(ENTRY, { todos, updatedAt: new Date().toISOString() });
     render();
   }
@@ -53,13 +56,28 @@ export default function todo(pi: ExtensionAPI) {
         try { if (!todos && details?.todos !== undefined) todos = normalizeTodos(details.todos); } catch { /* Ignore malformed details. */ }
       }
     }
-    if (todos?.length) { states.set(id, todos); render(); }
-    else { states.set(id, []); render(); }
+    if (todos?.length) { states.set(id, todos); if (isTerminal(todos)) clearPending.add(id); else clearPending.delete(id); render(); }
+    else { states.set(id, []); clearPending.delete(id); render(); }
   }
 
   pi.on("session_start", restore);
   pi.on("session_tree", restore);
+  pi.on("agent_end", () => {
+    const id = sessionId();
+    if (!id) return;
+    if (isTerminal(current())) clearPending.add(id); else clearPending.delete(id);
+  });
+  pi.on("before_agent_start", (event, context) => {
+    if (event.messageType !== "user") return;
+    ctx = context;
+    const id = sessionId();
+    if (!id || !clearPending.has(id)) return;
+    clearPending.delete(id);
+    if (isTerminal(current())) store([]);
+  });
   pi.on("session_shutdown", () => {
+    const id = sessionId();
+    if (id) clearPending.delete(id);
     if (ctx?.mode === "tui") ctx.ui.setWidget("todo", undefined);
     panel = undefined; activeSession = undefined; ctx = undefined;
   });

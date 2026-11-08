@@ -226,6 +226,9 @@ endpoint** (`provider: deepseek` / `api.deepseek.com`, `api: openai-completions`
   строк (сначала прячутся completed, затем хвост, с подписью `+N more`);
 - `ctrl+shift+t` / `/todos collapse|expand` сворачивает панель, `/todos` печатает
   список, `/todos clear` очищает;
+- если после `agent_end` все задачи `completed`/`cancelled`, панель остаётся до
+  следующего **пользовательского** сообщения и затем очищается сама (служебные
+  `triggerTurn`-сообщения её не трогают); незавершённые задачи переживают ход;
 - снимок каждого изменения пишется в custom entry (`pi-core:todo`), поэтому
   состояние переживает `/reload`, `/resume`, `/tree` и compaction; фолбэк —
   `details` последнего `todo_write`; в модель custom entries не попадают;

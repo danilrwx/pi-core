@@ -28,7 +28,7 @@ function harness(branch = [], sessionId = "s1") {
   };
   return {
     pi, tools, commands, shortcuts, handlers, entries, widgets, notices, context,
-    async emit(name, ctx = context) { await handlers.get(name)?.({}, ctx); },
+    async emit(name, event = {}, ctx = context) { await handlers.get(name)?.(event, ctx); },
     render() {
       const factory = widgets.get("todo");
       return typeof factory === "function" ? factory(tui, theme).render(80) : [];
@@ -136,4 +136,41 @@ test("invalid tool input is reported as a tool error without changing state", as
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /must not be empty/);
   assert.equal(h.entries.length, 0);
+});
+
+test("completed todos clear on the next user message, not on custom runs", async () => {
+  const h = harness();
+  await h.emit("session_start");
+  await h.call({ todos: [{ content: "Build", status: "completed" }, { content: "Ship", status: "cancelled" }] });
+  await h.emit("agent_end");
+  assert.match(h.render().join("\n"), /Build/);
+  await h.emit("before_agent_start", { messageType: "custom" });
+  assert.match(h.render().join("\n"), /Build/);
+  assert.equal(h.entries.length, 1);
+  await h.emit("before_agent_start", { messageType: "user" });
+  assert.deepEqual(h.render(), []);
+  assert.equal(h.entries.length, 2);
+  assert.deepEqual(h.entries[1].data.todos, []);
+});
+
+test("incomplete todos survive agent_end and the next user message", async () => {
+  const h = harness();
+  await h.emit("session_start");
+  await h.call({ todos: [{ content: "Build", status: "completed" }, { content: "Test", status: "pending" }] });
+  await h.emit("agent_end");
+  await h.emit("before_agent_start", { messageType: "user" });
+  assert.match(h.render().join("\n"), /Test/);
+  assert.equal(h.entries.length, 1);
+});
+
+test("a restored all-completed list clears on the next user message", async () => {
+  const branch = [
+    { type: "custom", customType: "pi-core:todo", data: { todos: [{ content: "Done", status: "completed" }] } },
+  ];
+  const h = harness(branch);
+  await h.emit("session_start");
+  assert.match(h.render().join("\n"), /Done/);
+  await h.emit("before_agent_start", { messageType: "user" });
+  assert.deepEqual(h.render(), []);
+  assert.equal(h.entries.length, 1);
 });
