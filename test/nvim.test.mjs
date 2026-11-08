@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { jiti } from "./host.mjs";
-const { parseDiffHunks, buildStops, newFileStop } = await jiti.import("../extensions/tour/plan.ts");
-const { planTour, default: nvimTour } = await jiti.import("../extensions/tour/index.ts");
+const { parseDiffHunks, buildStops, newFileStop } = await jiti.import("../extensions/nvim/plan.ts");
+const { planTour, default: nvimTour } = await jiti.import("../extensions/nvim/index.ts");
 
 function git(cwd, ...args) { return execFileSync("git", args, { cwd, encoding: "utf8" }); }
 async function repo() {
@@ -154,7 +154,7 @@ process.stdout.write(JSON.stringify({ ok: true, result: { file: "pi://review", t
 });
 
 test("ensureNvim opens a new tmux window when no socket responds", async () => {
-  const { ensureNvim } = await import("../extensions/tour/spawn.ts").catch(() => import("./host.mjs").then(async ({ jiti }) => jiti.import("../extensions/tour/spawn.ts")));
+  const { ensureNvim } = await import("../extensions/nvim/spawn.ts").catch(() => import("./host.mjs").then(async ({ jiti }) => jiti.import("../extensions/nvim/spawn.ts")));
   const dir = await mkdtemp(join(tmpdir(), "pi-core-tour-tmux-"));
   const bin = join(dir, "fake-nvim");
   await writeFile(bin, `#!${process.execPath}
@@ -186,7 +186,7 @@ fs.writeFileSync(match[1], "");
 
 test("ensureNvim refuses to auto-open outside tmux", async () => {
   const { jiti } = await import("./host.mjs");
-  const { ensureNvim } = await jiti.import("../extensions/tour/spawn.ts");
+  const { ensureNvim } = await jiti.import("../extensions/nvim/spawn.ts");
   const previous = { socket: process.env.PI_NVIM_SOCKET, session: process.env.TMUX };
   delete process.env.PI_NVIM_SOCKET; delete process.env.DUET_NVIM_SOCKET; delete process.env.NVIM_LISTEN_ADDRESS; delete process.env.TMUX;
   try { await assert.rejects(ensureNvim(process.cwd()), /tmux/); }
@@ -202,7 +202,7 @@ test("Neovim comments arrive in pi over the session socket", async () => {
   const { mkdtemp } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  const { commentSocketPath } = await jiti.import("../extensions/tour/index.ts");
+  const { commentSocketPath } = await jiti.import("../extensions/nvim/index.ts");
   const cwd = await mkdtemp(join(tmpdir(), "pi-core-comments-"));
   const handlers = new Map(), messages = [];
   const pi = {

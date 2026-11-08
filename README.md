@@ -257,7 +257,7 @@ endpoint** (`provider: deepseek` / `api.deepseek.com`, `api: openai-completions`
 удаляются, пробелы схлопываются); ответы не пишутся отдельным custom entry,
 поэтому вызов из codemode не оставит карточку в транскрипте.
 
-### Тур по изменениям в Neovim (`tour`)
+### Тур по изменениям в Neovim (`nvim`)
 
 Когда правок много, модель проходит по ним в открытом Neovim, а не вываливает
 diff в чат:
@@ -283,7 +283,7 @@ diff в чат:
 `Tour 3/12`, а на последнем стопе — указание спросить пользователя через
 инструмент `question` («всё ок / что поправить»).
 
-Мост **один**: `extensions/tour` (`client.lua` + `bridge.lua`) не зависит от
+Мост **один**: `extensions/nvim` (`client.lua` + `bridge.lua`) не зависит от
 duet и обслуживает всё — тур, комментарии, `propose_change`, `show`,
 `selection`, `nvim_context`, live-follow и `/nvim status|save`. Старое расширение
 `duet/pi/editor.ts` с командой `/nvim-status` из конфига убрано. Клиент
@@ -395,7 +395,7 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/voice/index.ts",
     "/home/danil/w/pi-core/extensions/todo/index.ts",
     "/home/danil/w/pi-core/extensions/question/index.ts",
-    "/home/danil/w/pi-core/extensions/tour/index.ts"
+    "/home/danil/w/pi-core/extensions/nvim/index.ts"
   ]}
 ```
 

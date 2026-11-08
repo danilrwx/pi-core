@@ -38,7 +38,7 @@ The Neovim tour client/bridge, discovery lock files and diff/dirty/context
 features were informed by coder/claudecode.nvim (MIT) and its published PROTOCOL.md;
 no Lua or TypeScript code was copied. The Unix-socket transport is our own.
 
-The Neovim tour client/bridge (`extensions/tour/*.lua`) is written locally
+The Neovim tour client/bridge (`extensions/nvim/*.lua`) is written locally
 as a minimal RPC shim; the duet bridge protocol informed it, but no Lua code was
 copied.
 
