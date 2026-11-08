@@ -69,3 +69,34 @@ test("Kitty upload is a tmux DCS-wrapped virtual placement", async () => {
   assert.match(payload, /\x1b\x1b_G/);
   assert.match(payload, /\x1b\x1b\\/);
 });
+
+test("pasted image path becomes a short token and is attached on submit", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-image-token-")), path = join(dir, "clipboard.png");
+  await writeFile(path, tinyPng());
+  const hooks = new Map();
+  let factory, editor;
+  const tui = { requestRender() {}, terminal: { columns: 100, rows: 40 } };
+  const keys = { matches: () => false, getKeys: () => [] };
+  plugin.default({ on(name, fn) { hooks.set(name, fn); }, registerCommand() {}, registerShortcut() {} });
+  const ctx = { mode: "tui", cwd: dir, ui: {
+    getEditorComponent: () => factory,
+    setEditorComponent(value) { factory = value; if (value) editor = value(tui, { borderColor: (text) => text }, keys); },
+    setWidget() {}, notify() {},
+  } };
+  await hooks.get("session_start")({}, ctx);
+  try {
+    editor.setText("look ");
+    editor.insertTextAtCursor(path);
+    const draft = editor.getExpandedText();
+    assert.ok(!draft.includes(path), "the temporary path must not stay in the draft");
+    assert.match(draft, /\u{1F5BC}1/u);
+    const token = draft.match(/\u{1F5BC}\d+/u)[0];
+    const result = await hooks.get("input")({ text: `look ${token}`, source: "interactive" }, ctx);
+    assert.equal(result.action, "transform");
+    assert.equal(result.text, "look");
+    assert.equal(result.images.length, 1);
+    assert.equal(result.images[0].type, "image");
+    assert.equal(result.images[0].mimeType, "image/png");
+    assert.ok(result.images[0].data.length > 0);
+  } finally { hooks.get("session_shutdown")({}, ctx); }
+});
