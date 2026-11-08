@@ -41,6 +41,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SHELL_PERMISSION_EVENT, type ShellPermissionRequest } from "../lib/shell-permission.js";
+import { classifyShellCommand } from "./shell-ast.js";
+import { completeArgs } from "../lib/complete.js";
 import {
   type PermissionLevel,
   type PermissionMode,
@@ -54,7 +57,6 @@ import {
   saveGlobalPermission,
   loadGlobalPermissionMode,
   saveGlobalPermissionMode,
-  classifyCommand,
   loadPermissionConfig,
   savePermissionConfig,
   invalidateConfigCache,
@@ -433,7 +435,7 @@ export async function handleBashToolCall(
 ): Promise<{ block: true; reason: string } | undefined> {
   if (state.currentLevel === "bypassed") return undefined;
 
-  const classification = classifyCommand(command);
+  const classification = await classifyShellCommand(command);
 
   if (classification.dangerous) {
     if (!hasInteractiveUI(ctx)) {
@@ -561,16 +563,32 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("permission", {
     description: "View or change permission level",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, [...LEVELS, "config"], { config: ["show", "reset"] },
+      { minimal: "read-only", low: "file edits", medium: "builds/tests/commits", high: "push/deploy", bypassed: "no checks (dangerous)",
+        config: "inspect overrides", show: "print permissionConfig", reset: "clear overrides" }),
     handler: (args, ctx) => handlePermissionCommand(state, args, ctx),
   });
 
   pi.registerCommand("permission-mode", {
     description: "Set permission prompt mode (ask or block)",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, [...PERMISSION_MODES], {},
+      { ask: "prompt when permission is required", block: "block instead of prompting" }),
     handler: (args, ctx) => handlePermissionModeCommand(state, args, ctx),
   });
 
+  const listen = () => pi.events.on(SHELL_PERMISSION_EVENT, (data) => {
+    const request = data as ShellPermissionRequest;
+    request.result = handleBashToolCall(state, request.command, request.ctx);
+  });
+  let unsubscribe: (() => void) | undefined;
   pi.on("session_start", async (_event, ctx) => {
     handleSessionStart(state, ctx);
+    unsubscribe?.();
+    unsubscribe = listen();
+  });
+  pi.on("session_shutdown", () => {
+    unsubscribe?.();
+    unsubscribe = undefined;
   });
 
   pi.on("tool_call", async (event, ctx) => {

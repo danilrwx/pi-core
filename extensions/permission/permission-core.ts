@@ -963,6 +963,19 @@ function classifySegment(tokens: string[]): Classification {
   return { level: "high", dangerous: false };
 }
 
+/** Classify argv already proven literal by the AST parser. Overrides apply to this command only. */
+export function classifyLiteralCommand(tokens: string[], raw: string, config?: PermissionConfig): Classification {
+  const effective = config ?? getCachedConfig();
+  const intrinsic = classifySegment(tokens);
+  const override = checkOverrides(raw, effective.overrides);
+  if (override) return { level: override.level, dangerous: intrinsic.dangerous || override.dangerous };
+  if (applyPrefixMappings(raw, effective.prefixMappings) !== raw) {
+    const mapped = classifyCommand(raw, effective);
+    return { level: mapped.level, dangerous: intrinsic.dangerous || mapped.dangerous };
+  }
+  return intrinsic;
+}
+
 export function classifyCommand(command: string, config?: PermissionConfig): Classification {
   const effectiveConfig = config ?? getCachedConfig();
   const normalizedCommand = applyPrefixMappings(command, effectiveConfig.prefixMappings);

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "extensions/permission/*.ts",
+    "extensions/partial-output/*.ts",
+    "extensions/read-watch/*.ts",
+    "extensions/image-preview/*.ts",
+    "extensions/voice/*.ts",
+    "extensions/prefix/*.ts",
+    "extensions/question/*.ts",
+    "extensions/todo/*.ts",
+    "extensions/nvim-tour/*.ts"
+  ]
+}

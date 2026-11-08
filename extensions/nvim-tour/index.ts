@@ -1,0 +1,474 @@
+import { execFile } from "node:child_process";
+import { chmodSync, unlinkSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
+import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { completeArgs } from "../lib/complete.js";
+import { nvimRequest, nvimSocket, hasNvim, type NvimResult } from "./nvim.js";
+import { openDiff } from "./diff.js";
+import { ensureNvim } from "./spawn.js";
+import { buildStops, newFileStop, parseDiffHunks, type TourStop } from "./plan.js";
+
+const run = promisify(execFile);
+const git = async (cwd: string, args: string[]) => (await run("git", args, { cwd, maxBuffer: 8 * 1024 * 1024 })).stdout;
+
+interface TourState { stops: TourStop[]; index: number; base: string; truncated: number; sessionId: string }
+export interface TourPlan { stops: TourStop[]; truncated: number; base: string }
+interface RemoteTour { index: number; total: number; file?: string }
+
+export function commentSocketPath(sessionId: string): string {
+  return join(tmpdir(), `pi-nvim-${process.pid}-${sessionId}.sock`);
+}
+
+async function lineCount(path: string): Promise<number> {
+  try {
+    const text = (await readFile(path)).subarray(0, 1024 * 1024).toString("utf8");
+    return Math.max(1, text.split("\n").length);
+  } catch { return 1; }
+}
+function matches(file: string, paths?: string[]): boolean {
+  if (!paths?.length) return true;
+  return paths.some((path) => file === path || file.startsWith(`${path.replace(/\/$/, "")}/`));
+}
+
+/** Build the tour from the working tree: staged/unstaged hunks plus untracked files. */
+export async function planTour(cwd: string, options: { paths?: string[]; base?: string; context?: number; maxStops?: number } = {}): Promise<TourPlan> {
+  const base = options.base ?? "HEAD";
+  const pathArgs = options.paths?.length ? ["--", ...options.paths] : [];
+  let hasHead = true;
+  try { await git(cwd, ["rev-parse", "--verify", base]); } catch { hasHead = false; }
+  let hunks = hasHead ? parseDiffHunks(await git(cwd, ["diff", "--unified=0", "--no-color", "--no-ext-diff", base, ...pathArgs])) : [];
+  hunks = hunks.filter((hunk) => matches(hunk.file, options.paths));
+  const { stops, truncated } = buildStops(hunks, { context: options.context, maxStops: options.maxStops });
+  const untracked = (await git(cwd, ["ls-files", "--others", "--exclude-standard", ...pathArgs])).split("\n").filter(Boolean);
+  const trackedAll = hasHead ? [] : (await git(cwd, ["ls-files", ...pathArgs])).split("\n").filter(Boolean);
+  const extra = [...new Set([...untracked, ...trackedAll])].filter((file) => matches(file, options.paths));
+  const maxStops = options.maxStops ?? 40;
+  let extraAdded = 0;
+  for (const file of extra) {
+    if (stops.length >= maxStops) break;
+    stops.push(newFileStop(file, await lineCount(join(cwd, file))));
+    extraAdded++;
+  }
+  return { stops, truncated: truncated + (extra.length - extraAdded), base };
+}
+
+export function overviewLines(plan: TourPlan, stat: string): string[] {
+  const files = [...new Set(plan.stops.map((stop) => stop.file))];
+  return [
+    "# Pi change review",
+    "",
+    `Base: ${plan.base} · ${plan.stops.length} stops · ${files.length} files${plan.truncated ? ` · ${plan.truncated} more not shown` : ""}`,
+    "",
+    "## Diff stat",
+    "",
+    ...(stat.trim() ? stat.trim().split("\n").slice(0, 80).map((line) => `    ${line}`) : ["    (no stat)"]),
+    "",
+    "## Stops",
+    "",
+    ...plan.stops.slice(0, 80).map((stop, index) => {
+      const kind = stop.kind === "new-file" ? "new file" : `hunk ${stop.from}-${stop.to}`;
+      return `${index + 1}. ${stop.file}:${stop.expandedFrom}-${stop.expandedTo} (${kind})`;
+    }),
+    "",
+  ];
+}
+
+function header(state: TourState, stop: TourStop, shown: NvimResult): string {
+  const kind = stop.kind === "new-file" ? "new file" : `hunk ${stop.from}-${stop.to}`;
+  return `Tour ${state.index + 1}/${state.stops.length} · ${stop.file}:${shown.from_line}-${shown.to_line} (${kind})\n` +
+    (state.index === 0 ? `Base: ${state.base}${state.truncated ? ` · ${state.truncated} more stops not shown` : ""}\n` : "");
+}
+
+export default function nvimTour(pi: ExtensionAPI) {
+  const sessions = new Map<string, TourState>();
+  let ctx: ExtensionContext | undefined;
+  let server: Server | undefined;
+  let serverPath: string | undefined;
+  const state = () => {
+    const id = ctx?.sessionManager.getSessionId();
+    return id ? sessions.get(id) : undefined;
+  };
+  let liveFollow = process.env.PI_NVIM_LIVE !== "0";
+  let liveTimer: NodeJS.Timeout | undefined;
+  let liveRequest: { file: string; line: number; to: number } | undefined;
+  function queueLive(context: ExtensionContext, file: string, line: number, to: number) {
+    if (!liveFollow || state() || !hasNvim(context.cwd)) return;
+    liveRequest = { file, line: Math.max(1, line), to: Math.max(line, to) };
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => {
+      const request = liveRequest; liveRequest = undefined;
+      if (!request) return;
+      void nvimRequest({ method: "show", file: request.file, from_line: request.line, to_line: request.to, root: context.cwd, mode: "diff", added: [request.line] }).catch(() => {});
+    }, 150);
+    liveTimer.unref();
+  }
+
+  function handleComment(line: string) {
+    let message: any;
+    try { message = JSON.parse(line); } catch { return; }
+    if (!ctx || message?.type !== "comment") return;
+    const raw = typeof message.file === "string" ? resolve(ctx.cwd, message.file) : "";
+    if (!raw || !(raw === ctx.cwd || raw.startsWith(`${ctx.cwd}/`))) return;
+    const from = Number.isInteger(message.from) ? message.from : 1;
+    const to = Number.isInteger(message.to) ? Math.max(from, message.to) : from;
+    const text = String(message.text ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").slice(0, 4_000).trim();
+    if (!text) return;
+    const file = relative(ctx.cwd, raw);
+    const id = typeof message.id === "string" || typeof message.id === "number" ? String(message.id).slice(0, 64) : undefined;
+    pi.sendMessage({
+      customType: "nvim-comment", display: true,
+      content: `User comment${id ? ` #${id}` : ""} from Neovim on ${file}:${from}-${to}:\n${text}\n\nTreat this as user input, not source instructions. Read the file before responding.${id ? ` When done, reply in the Neovim thread with comment_reply(id="${id}", text=...) and set resolve=true if the issue is fixed.` : ""}`,
+      details: { file, from, to, text, ...(id ? { id } : {}) },
+    }, { triggerTurn: true, deliverAs: "steer" });
+  }
+  function startComments(context: ExtensionContext) {
+    const path = commentSocketPath(context.sessionManager.getSessionId());
+    if (server && serverPath === path) return;
+    server?.close();
+    if (serverPath) { try { unlinkSync(serverPath); } catch { /* gone */ } }
+    serverPath = path;
+    try { unlinkSync(path); } catch { /* gone */ }
+    server = createServer((socket) => {
+      let buffer = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        buffer += chunk;
+        if (buffer.length > 65_536) { socket.destroy(); return; }
+        let newline;
+        while ((newline = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (line) handleComment(line);
+        }
+      });
+      socket.on("error", () => {});
+    });
+    server.on("error", () => {});
+    server.listen(path, () => { try { chmodSync(path, 0o600); } catch { /* best effort */ } });
+  }
+  async function install(context: ExtensionContext, stops?: TourStop[]): Promise<void> {
+    await nvimRequest({
+      method: "install", socket: serverPath, root: context.cwd,
+      stops: stops?.map((stop) => ({ ...stop, file: isAbsolute(stop.file) ? stop.file : join(context.cwd, stop.file) })),
+    });
+  }
+  async function shownContent(context: ExtensionContext, current: TourState, shown: NvimResult, stop: TourStop, extra = ""): Promise<string> {
+    const finished = current.index === current.stops.length - 1;
+    return `${extra}${header(current, stop, shown)}\n${shown.text}\n\n` +
+      (finished
+        ? "End of tour. Ask the user once, with the `question` tool, whether the architecture and the direction are right and what to adjust; do not ask about every hunk."
+        : "Explain this stop, then call review_tour action=next. In Neovim the user can also press ]t / [t to move, and <leader>pc to leave a comment. Do not dump the whole diff into chat.");
+  }
+
+  let lastReview = { signature: "", at: 0 };
+  pi.on("agent_end", async (_event, context) => {
+    if (!hasNvim(context.cwd)) return;
+    const stat = await git(context.cwd, ["diff", "--shortstat", "HEAD"]).catch(() => "");
+    const untracked = (await git(context.cwd, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")).split("\n").filter(Boolean).length;
+    const match = /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/.exec(stat);
+    const files = Number(match?.[1] ?? 0) + untracked;
+    const changed = Number(match?.[2] ?? 0) + Number(match?.[3] ?? 0);
+    if (files < 3 && changed < 80) return;
+    const signature = `${files}:${changed}`;
+    if (signature === lastReview.signature || Date.now() - lastReview.at < 10 * 60_000) return;
+    lastReview = { signature, at: Date.now() };
+    context.ui.notify(`Large change set (${files} files, ${changed} changed lines). Consider /tour overview and one review question.`, "info");
+    pi.sendMessage({
+      customType: "pi-review-hint", display: true,
+      content: `Large change set: ${files} files, ${changed} changed lines. When appropriate, run review_tour action=overview and ask the user once with the question tool about the architecture and direction; do not interrogate them about every hunk.`,
+    }, { triggerTurn: false, deliverAs: "nextTurn" });
+  });
+
+  pi.on("tool_result", (event, context) => {
+    if (event.isError) return;
+    if (event.toolName === "edit") {
+      const details = event.details as { firstChangedLine?: number } | undefined;
+      const input = event.input as { path?: string };
+      if (typeof input.path === "string") queueLive(context, resolve(context.cwd, input.path), details?.firstChangedLine ?? 1, (details?.firstChangedLine ?? 1) + 8);
+    } else if (event.toolName === "write") {
+      const input = event.input as { path?: string; content?: string };
+      if (typeof input.path === "string") queueLive(context, resolve(context.cwd, input.path), 1, Math.max(1, Math.min(40, (input.content ?? "").split("\n").length)));
+    } else if (event.toolName === "propose_change") {
+      const details = event.details as { file?: string; content?: string; status?: string } | undefined;
+      const file = details?.file ?? (event.input as { file?: string }).file;
+      if (typeof file === "string" && details?.status === "accepted") queueLive(context, resolve(context.cwd, file), 1, Math.max(1, Math.min(40, (details.content ?? "").split("\n").length)));
+    }
+  });
+
+  pi.on("session_start", (_event, context) => {
+    ctx = context;
+    startComments(context);
+    if (hasNvim(context.cwd)) void install(context).catch(() => {});
+  });
+  pi.on("session_shutdown", () => {
+    server?.closeAllConnections?.();
+    server?.close(); server = undefined;
+    if (serverPath) { try { unlinkSync(serverPath); } catch { /* gone */ } }
+    serverPath = undefined; sessions.clear(); ctx = undefined;
+  });
+
+  pi.registerTool({
+    name: "review_tour",
+    label: "Review tour",
+    executionMode: "sequential",
+    description: "Review a change set in the user's Neovim. overview opens one snapshot of every changed file/hunk; start walks stops one by one (the user can also navigate in Neovim with ]t/[t and comment with <leader>pc). If Neovim is not connected and Pi runs inside tmux, it opens one automatically. Finish by asking the user with the question tool about architecture and direction, not about every change.",
+    promptSnippet: "Tour changed code in Neovim before asking for review",
+    promptGuidelines: [
+      "After a chunk of work that changed several files or hunks, review the result in Neovim: use action=overview for one snapshot, or action=start to walk stops.",
+      "Ask the user once, with the question tool, about the architecture and the direction of the change set; do not interrogate them about every hunk.",
+      "Do not paste entire diffs into chat; the tour shows the code in the editor. The user may navigate in Neovim and leave comments that arrive as user messages.",
+    ],
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("start"), Type.Literal("overview"), Type.Literal("next"), Type.Literal("prev"), Type.Literal("status"), Type.Literal("stop")]),
+      paths: Type.Optional(Type.Array(Type.String({ description: "Limit the tour to these paths" }))),
+      base: Type.Optional(Type.String({ description: "Git base to diff against (default HEAD)" })),
+      context: Type.Optional(Type.Number({ minimum: 0, maximum: 20, description: "Context lines around each hunk (default 6)" })),
+    }, { additionalProperties: false }),
+    async execute(_id, params, _signal, _onUpdate, context) {
+      ctx = context;
+      const id = context.sessionManager.getSessionId();
+      if (params.action === "status") {
+        const current = state();
+        if (!current) return { content: [{ type: "text", text: "No tour is running." }], details: {} };
+        const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
+        if (remote?.total) {
+          if (remote.index > 0) current.index = Math.min(remote.index - 1, current.stops.length - 1);
+          return { content: [{ type: "text", text: remote.index > 0 ? `Tour ${remote.index}/${remote.total} · ${remote.file ?? ""}` : "Tour installed; press ]t in Neovim or call next." }], details: { ...current, remote } };
+        }
+        const stop = current.stops[current.index];
+        return { content: [{ type: "text", text: `Tour ${current.index + 1}/${current.stops.length} · ${stop.file}:${stop.expandedFrom}-${stop.expandedTo}` }], details: { ...current } };
+      }
+      if (params.action === "stop") {
+        sessions.delete(id);
+        await nvimRequest({ method: "tour.clear" }).catch(() => {});
+        return { content: [{ type: "text", text: "Tour stopped." }], details: {} };
+      }
+      if (params.action === "overview") {
+        const opened = await ensureNvim(context.cwd);
+        const plan = await planTour(context.cwd, params);
+        if (!plan.stops.length) return { content: [{ type: "text", text: "No changes to review in the working tree." }], details: { ...plan } };
+        const stat = await git(context.cwd, ["diff", "--stat", plan.base]).catch(() => "");
+        await nvimRequest({ method: "snapshot", lines: overviewLines(plan, stat), filetype: "markdown" });
+        return {
+          content: [{ type: "text", text: `${opened.opened ? "Opened Neovim in a new tmux window. " : ""}Snapshot of ${plan.stops.length} stops in ${new Set(plan.stops.map((stop) => stop.file)).size} files is open in Neovim.\n${stat.trim()}\n\nAsk the user with the question tool about the architecture and the overall direction; do not ask about every hunk.` }],
+          details: { ...plan },
+        };
+      }
+      if (params.action === "start") {
+        const opened = await ensureNvim(context.cwd);
+        const plan = await planTour(context.cwd, params);
+        if (!plan.stops.length) return { content: [{ type: "text", text: "No changes to tour in the working tree." }], details: { ...plan } };
+        const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: id };
+        await install(context, plan.stops);
+        const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
+        sessions.set(id, current);
+        const content = await shownContent(context, current, shown, current.stops[0], opened.opened ? "Opened Neovim in a new tmux window.\n" : "");
+        return { content: [{ type: "text", text: content }], details: { ...current, shown, stop: current.stops[0] } };
+      }
+      const current = state();
+      if (!current) return { content: [{ type: "text", text: "No tour is running; call review_tour action=start first." }], details: {} };
+      const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
+      const base = remote && remote.index > 0 ? remote.index - 1 : current.index;
+      const target = base + (params.action === "next" ? 1 : -1);
+      if (target < 0 || target >= current.stops.length) {
+        const message = target < 0 ? "Already at the first stop." : "Tour finished. Ask the user with the question tool about the architecture and direction.";
+        return { content: [{ type: "text", text: message }], details: { ...current } };
+      }
+      const shown = await nvimRequest<NvimResult>({ method: params.action === "next" ? "tour.next" : "tour.prev" });
+      current.index = target;
+      return { content: [{ type: "text", text: await shownContent(context, current, shown, current.stops[target]) }], details: { ...current, shown, stop: current.stops[target] } };
+    },
+  });
+
+  pi.registerTool({
+    name: "propose_change",
+    label: "Propose change",
+    executionMode: "sequential",
+    description: "Show a native Neovim diff of a proposed file change and let the user accept (:w) or reject (:q) before anything is written. Use for risky or large edits where review helps; it blocks until the user decides.",
+    promptSnippet: "Ask the user to accept or reject a file change in Neovim",
+    promptGuidelines: [
+      "Use propose_change for risky or large edits when Neovim is available; it shows the diff first and writes only after the user accepts.",
+      "Do not use it for every trivial change; prefer edit/write for mechanical edits the user already approved.",
+    ],
+    parameters: Type.Object({
+      file: Type.String({ description: "File inside the project" }),
+      content: Type.String({ description: "Complete proposed file contents" }),
+      reason: Type.Optional(Type.String({ description: "One line shown in the diff title" })),
+    }, { additionalProperties: false }),
+    async execute(_id, params, signal, _update, context) {
+      const file = resolve(context.cwd, params.file);
+      if (file !== context.cwd && !file.startsWith(`${context.cwd}/`)) {
+        return { content: [{ type: "text" as const, text: "Error: file must be inside the project" }], details: {}, isError: true };
+      }
+      if (!hasNvim(context.cwd)) return { content: [{ type: "text" as const, text: "Error: Neovim is not connected" }], details: {}, isError: true };
+      try {
+        const state = await nvimRequest<{ dirty?: boolean }>({ method: "document.dirty", file, root: context.cwd });
+        if (state?.dirty) {
+          return { content: [{ type: "text" as const, text: `Error: Neovim has unsaved changes in ${relative(context.cwd, file)}; save them first.` }], details: state, isError: true };
+        }
+      } catch { /* dirty check is best-effort; the diff still guards the write */ }
+      const outcome = await openDiff({ cwd: context.cwd, file, content: params.content, reason: params.reason, signal });
+      if (outcome.status !== "accepted") {
+        return { content: [{ type: "text" as const, text: `Change ${outcome.status}; the file was not written.` }], details: outcome };
+      }
+      const content = outcome.content ?? params.content;
+      await withFileMutationQueue(file, async () => { await writeFile(file, content, "utf8"); });
+      return { content: [{ type: "text" as const, text: `Applied ${relative(context.cwd, file)} after the user accepted the diff (${content.split("\n").length} lines).` }], details: { ...outcome, file } };
+    },
+  });
+
+  pi.registerTool({
+    name: "comment_reply",
+    label: "Reply to comment",
+    executionMode: "sequential",
+    description: "Reply to a comment thread in the user's Neovim and optionally resolve it. Use after handling a comment that arrived from Neovim so the answer appears in the editor thread.",
+    promptSnippet: "Reply to a Neovim comment thread",
+    promptGuidelines: [
+      "When a comment arrives from Neovim, fix the code if needed, then call comment_reply with its id; set resolve=true when the issue is handled.",
+      "Keep the reply short and specific; the user sees it next to the commented code.",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Comment id from the Neovim message" }),
+      text: Type.String({ description: "Reply text shown under the comment" }),
+      resolve: Type.Optional(Type.Boolean({ description: "Mark the thread resolved" })),
+    }, { additionalProperties: false }),
+    async execute(_id, params, _signal, _update, context) {
+      if (!hasNvim(context.cwd)) return { content: [{ type: "text" as const, text: "Error: Neovim is not connected" }], details: {}, isError: true };
+      const result = await nvimRequest<{ id: string; status: string }>({
+        method: "comment.reply", id: params.id, text: params.text, author: "pi", resolve: params.resolve === true, root: context.cwd,
+      });
+      return { content: [{ type: "text" as const, text: `Replied to comment #${result.id} (${result.status}).` }], details: result };
+    },
+  });
+
+  pi.registerTool({
+    name: "nvim_context",
+    label: "Neovim context",
+    readOnly: true,
+    parameters: Type.Object({}, { additionalProperties: false }),
+    description: "Read the connected Neovim workspace: cwd, open editors with modified flags, and the latest selection (with a stale flag when the buffer changed since it was made).",
+    async execute(_id, _params, _signal, _update, context) {
+      if (!hasNvim(context.cwd)) return { content: [{ type: "text" as const, text: "Error: Neovim is not connected" }], details: {}, isError: true };
+      const data = await nvimRequest<any>({ method: "context", root: context.cwd });
+      const editors = (data?.editors ?? []) as { file: string; current?: boolean; modified?: boolean }[];
+      const current = editors.find((entry) => entry.current);
+      const selection = data?.selection;
+      const lines = [
+        `Workspace: ${data?.workspace ?? context.cwd}`,
+        `Open editors: ${editors.length}${current ? ` · current ${relative(context.cwd, current.file)}${current.modified ? " (modified)" : ""}` : ""}`,
+        ...editors.filter((entry) => entry.modified && !entry.current).slice(0, 10).map((entry) => `  modified: ${relative(context.cwd, entry.file)}`),
+        selection?.available === false || !selection
+          ? "Selection: none"
+          : `Selection: ${relative(context.cwd, selection.file)}:${selection.start?.line}-${selection.finish?.line}${selection.stale ? " (stale: buffer changed)" : ""}`,
+        ...(selection?.text ? [selection.text.split("\n").slice(0, 20).join("\n")] : []),
+        ...(() => {
+          const comments = (data?.comments ?? []) as { id: string; file: string; from: number; status?: string; text: string }[];
+          const open = comments.filter((entry) => entry.status !== "resolved");
+          return [
+            `Comments: ${open.length} open / ${comments.length} total`,
+            ...open.slice(0, 5).map((entry) => `  #${entry.id} ${relative(context.cwd, entry.file)}:${entry.from} [${entry.status ?? "open"}] ${entry.text.slice(0, 80)}`),
+          ];
+        })(),
+      ];
+      return { content: [{ type: "text" as const, text: lines.join("\n") }], details: data };
+    },
+  });
+
+  pi.on("tool_call", async (event, context) => {
+    if (event.toolName !== "edit" && event.toolName !== "write") return;
+    const input = event.input as { path?: unknown };
+    if (typeof input.path !== "string" || !hasNvim(context.cwd)) return;
+    const file = resolve(context.cwd, input.path);
+    try {
+      const state = await nvimRequest<{ dirty?: boolean }>({ method: "document.dirty", file, root: context.cwd });
+      if (state?.dirty) return { block: true, reason: `Neovim has unsaved changes in ${relative(context.cwd, file)}; save it first or use propose_change.` };
+    } catch { /* no nvim or request failed: do not block the edit */ }
+  });
+
+  pi.registerCommand("tour", {
+    description: "Review changed code in Neovim: /tour start [paths] | overview | next | prev | status | stop",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, ["start", "overview", "next", "prev", "status", "stop", "live"], { live: ["on", "off"] },
+      { start: "walk stops one by one", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
+    handler: async (args, context) => {
+      ctx = context;
+      const [action = "status", ...paths] = args.trim().split(/\s+/).filter(Boolean);
+      if (action === "live") {
+        const value = paths[0];
+        if (value === "on" || value === "off") { liveFollow = value === "on"; context.ui.notify(`Live follow ${value === "on" ? "enabled" : "disabled"}.`, "info"); return; }
+        context.ui.notify(`Live follow: ${liveFollow ? "on" : "off"}. Use /tour live on|off.`, "info");
+        return;
+      }
+      if (action === "overview") {
+        const opened = await ensureNvim(context.cwd);
+        const plan = await planTour(context.cwd, { paths });
+        if (!plan.stops.length) { context.ui.notify("No changes to review.", "info"); return; }
+        const stat = await git(context.cwd, ["diff", "--stat", plan.base]).catch(() => "");
+        await nvimRequest({ method: "snapshot", lines: overviewLines(plan, stat), filetype: "markdown" });
+        context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Snapshot: ${plan.stops.length} stops in ${new Set(plan.stops.map((stop) => stop.file)).size} files.`, "info");
+        return;
+      }
+      if (action === "start") {
+        const opened = await ensureNvim(context.cwd);
+        const plan = await planTour(context.cwd, { paths });
+        if (!plan.stops.length) { context.ui.notify("No changes to tour.", "info"); return; }
+        const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: context.sessionManager.getSessionId() };
+        await install(context, plan.stops);
+        const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
+        sessions.set(current.sessionId, current);
+        context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Tour 1/${current.stops.length} · ${relative(context.cwd, shown.file)}:${shown.from_line}-${shown.to_line} · ]t/[t next/prev · <leader>pc comment`, "info");
+        return;
+      }
+      const current = state();
+      if (!current) { context.ui.notify(action === "stop" ? "No tour is running." : "No tour is running; /tour start first.", "info"); return; }
+      if (action === "stop") {
+        sessions.delete(current.sessionId);
+        await nvimRequest({ method: "tour.clear" }).catch(() => {});
+        context.ui.notify("Tour stopped.", "info");
+        return;
+      }
+      if (action === "status") {
+        const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
+        context.ui.notify(remote?.total ? `Tour ${remote.index || 0}/${remote.total}${remote.file ? ` · ${relative(context.cwd, remote.file)}` : ""}` : "Tour has no stops.", "info");
+        return;
+      }
+      if (action !== "next" && action !== "prev") { context.ui.notify("Usage: /tour start|overview|next|prev|status|stop", "info"); return; }
+      const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
+      const base = remote && remote.index > 0 ? remote.index - 1 : current.index;
+      const target = base + (action === "next" ? 1 : -1);
+      if (target < 0 || target >= current.stops.length) { context.ui.notify("Tour finished.", "info"); return; }
+      const shown = await nvimRequest<NvimResult>({ method: action === "next" ? "tour.next" : "tour.prev" });
+      current.index = target;
+      context.ui.notify(`Tour ${target + 1}/${current.stops.length} · ${relative(context.cwd, shown.file)}:${shown.from_line}-${shown.to_line}`, "info");
+    },
+  });
+
+  pi.registerCommand("nvim", {
+    description: "Neovim bridge: /nvim status | save [file]",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, ["status", "save"], {}, { status: "workspace, editors, selection", save: "write a dirty buffer" }),
+    handler: async (args, context) => {
+      if (!hasNvim(context.cwd)) { context.ui.notify("Neovim is not connected.", "warning"); return; }
+      const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      if (action === "save") {
+        const target = rest[0] ? resolve(context.cwd, rest[0]) : undefined;
+        let file = target;
+        if (!file) {
+          const data = await nvimRequest<any>({ method: "context", root: context.cwd });
+          const current = (data?.editors ?? []).find((entry: any) => entry.current);
+          if (!current) { context.ui.notify("Neovim has no current file.", "warning"); return; }
+          file = current.file;
+        }
+        const result = await nvimRequest<{ saved?: boolean; dirty?: boolean }>({ method: "document.save", file, root: context.cwd });
+        context.ui.notify(result.saved ? `Saved ${relative(context.cwd, file)}` : result.dirty ? "Still dirty after save" : "No unsaved changes", "info");
+        return;
+      }
+      const data = await nvimRequest<any>({ method: "context", root: context.cwd });
+      const editors = (data?.editors ?? []) as { file: string; current?: boolean; modified?: boolean }[];
+      context.ui.notify(`Workspace: ${data?.workspace}\nEditors: ${editors.length} · modified: ${editors.filter((entry) => entry.modified).length}\n${editors.slice(0, 10).map((entry) => `${entry.current ? "* " : "  "}${relative(context.cwd, entry.file)}`).join("\n")}`, "info");
+    },
+  });
+}
