@@ -51,6 +51,8 @@ export default function readWatch(pi: ExtensionAPI) {
     }
     for (const record of [...records.values()].slice(-256)) {
       if (generation !== epoch) return;
+      // Stale entries can point at deleted/renamed paths from an older session.
+      if (await fingerprint(record.path) === "missing") continue;
       current.observe(record);
       await current.check(record.path);
     }

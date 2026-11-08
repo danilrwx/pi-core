@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -53,5 +53,47 @@ test("memory extension recalls relevant notes into a prompt section and drops it
     assert.equal(other.systemPromptOptions.sections.long_term_memory, undefined);
   } finally {
     if (previous === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous;
+  }
+});
+
+test("memory is stored as Claude-compatible Markdown with MEMORY.md index", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-memory-md-"));
+  const previous = process.env.PI_MEMORY_DIR;
+  process.env.PI_MEMORY_DIR = dir;
+  try {
+    const result = await store.addMemory("/repo/a", { text: "Use pnpm", description: "Package manager", tags: ["tooling"], type: "feedback" });
+    const file = join(store.projectMemoryDir("/repo/a"), `${result.memory.id}.md`);
+    const markdown = await readFile(file, "utf8");
+    assert.match(markdown, /^---\nname: /);
+    assert.match(markdown, /metadata:\n  node_type: memory\n  type: feedback/);
+    assert.match(markdown, /description: "Package manager"/);
+    const index = await readFile(join(store.projectMemoryDir("/repo/a"), "MEMORY.md"), "utf8");
+    assert.match(index, new RegExp(`\\[Package manager\\]\\(${result.memory.id}\\.md\\)`));
+  } finally {
+    if (previous === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous;
+  }
+});
+
+test("importClaude copies Claude project memory once and keeps its type and description", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-memory-import-"));
+  const claude = await mkdtemp(join(tmpdir(), "claude-config-"));
+  const previous = { memory: process.env.PI_MEMORY_DIR, claude: process.env.CLAUDE_CONFIG_DIR };
+  process.env.PI_MEMORY_DIR = dir; process.env.CLAUDE_CONFIG_DIR = claude;
+  try {
+    const source = join(claude, "projects", store.projectSlug("/repo/a"), "memory");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "MEMORY.md"), "- [Rule](rule.md) — do it\n");
+    await writeFile(join(source, "rule.md"), `---\nname: rule\ndescription: "Never force push"\nmetadata: \n  node_type: memory\n  type: feedback\n  originSessionId: session-1\n---\n\nNever force push main.\n\n**Why:** shared branch.\n`);
+    assert.equal(await store.importClaude("/repo/a"), 1);
+    const all = await store.loadAll("/repo/a");
+    assert.equal(all.length, 1);
+    assert.equal(all[0].id, "rule");
+    assert.equal(all[0].type, "feedback");
+    assert.equal(all[0].description, "Never force push");
+    assert.match(all[0].text, /Never force push main/);
+    assert.equal(await store.importClaude("/repo/a"), 0);
+  } finally {
+    if (previous.memory === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous.memory;
+    if (previous.claude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previous.claude;
   }
 });

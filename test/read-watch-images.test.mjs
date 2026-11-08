@@ -78,3 +78,18 @@ test("local image preview uses bounded UI data without modifying the original", 
   assert.equal(await images.previewFile(join(dir, "missing.png")), undefined);
   assert.equal(await images.previewFile(dir), undefined);
 });
+
+test("read-watch restore ignores stale records for deleted or renamed files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-stale-restore-"));
+  const missing = join(dir, "removed.ts");
+  const hooks = new Map(), messages = [];
+  readWatch.default({ on(name, fn) { hooks.set(name, fn); }, registerCommand() {}, appendEntry() {},
+    sendMessage(...args) { messages.push(args); } });
+  const ctx = { cwd: dir, sessionManager: { getBranch: () => [
+    { type: "custom", customType: "pi-core:read-fingerprint", data: { path: missing, fingerprint: "sha256:gone" } },
+  ] }, ui: { setStatus() {} } };
+  await hooks.get("session_start")({}, ctx);
+  await delay(350);
+  assert.equal(messages.length, 0);
+  hooks.get("session_shutdown")({}, ctx);
+});

@@ -69,6 +69,11 @@ export class ReadTracker {
     if (!record || this.closed || this.writing.has(path)) return false;
     const current = await fingerprint(path);
     if (this.closed || this.files.get(path) !== record || this.writing.has(path)) return false;
+    // A deleted file cannot be re-read, so warn once and wait for a possible recreation.
+    if (current === "missing" && record.baseline !== "missing") {
+      if (record.notified !== "missing") { record.notified = "missing"; this.changed(path, current); }
+      return true;
+    }
     if (current !== record.baseline && current !== record.notified) {
       record.notified = current;
       this.changed(path, current);
