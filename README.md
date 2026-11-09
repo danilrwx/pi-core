@@ -87,6 +87,20 @@ TS/JS, Python, Go, Rust, Java, Kotlin, Ruby, PHP, Lua, shell; для незна�
 языка честно говорит, что символы не распознаны. В выводе видно `lsp` или
 `regex` — источник скелета.
 
+### Телеметрия кеша (`cache-guard`)
+
+`/cache` показывает последние 10 ходов текущей сессии: prompt, hit%, cost,
+output. Холодный ход отмечается `COLD`, если prompt ≥ 4k, hit < 50% и hit упал
+на ≥ 35% относительно предыдущего хода. Перед/после compaction приходят
+уведомления о сбросе prompt cache. `/cache clear` очищает историю.
+
+### Статистика (`stats`)
+
+`/stats [all|7|30]` агрегирует JSONL-сессии pi: сессии, ходы, стоимость,
+input/output/cache-read, hit%, холодные ходы, модели, проекты и top-сессии.
+По умолчанию — последние 7 дней. Читает только `sessions/` в agent dir;
+ничего не отправляет наружу.
+
 ### Долговременная память (`memory`)
 
 Локальные заметки между сессиями: `memory` tool и `/memory`.
@@ -477,7 +491,9 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/notify/index.ts",
     "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts",
     "/home/danil/w/pi-core/extensions/checkpoint/index.ts",
-    "/home/danil/w/pi-core/extensions/cache-warming/index.ts"
+    "/home/danil/w/pi-core/extensions/cache-warming/index.ts",
+    "/home/danil/w/pi-core/extensions/cache-guard/index.ts",
+    "/home/danil/w/pi-core/extensions/stats/index.ts"
   ]}
 ```
 
@@ -504,9 +520,9 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail, checkpoint/rewind, cache-warming, LSP-точный index,
-Claude-совместимая память (импорт, Markdown/frontmatter, auto-recall,
-auto-memory, Jev+локальный кеш) и needs-input уведомления.
+bash-head-tail, checkpoint/rewind, cache-warming, cache-guard, stats,
+LSP-точный index, Claude-совместимая память (импорт, Markdown/frontmatter,
+auto-recall, auto-memory, Jev+локальный кеш) и needs-input уведомления.
 
 ## Что пока не перенесено
 
