@@ -84,7 +84,6 @@ Each grammar is MIT and has its own `vendor/tree-sitter-languages/LICENSE-tree-s
 - `tree-sitter-css@0.20.0` (MIT)
 - `tree-sitter-toml@0.5.1` (MIT)
 - `tree-sitter-vue` (`7e48557b903a9db9c38cea3b7839ef7e1f36c693`, MIT)
-- `@tree-sitter-grammars/tree-sitter-yaml@0.7.1` (`9632edc32eb86966a482fcb3c9a7f4bb78ae0ddb`, MIT)
 - `tree-sitter-dart` from `github:UserNobody14/tree-sitter-dart` (unpinned by upstream; MIT)
 
 The licenses are kept next to the WASM files. No grammar build scripts were run.

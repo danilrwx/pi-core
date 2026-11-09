@@ -50,18 +50,34 @@ test("tree-sitter outlines markup and config files", async () => {
   assert.ok(vue.symbols.some((s) => s.kind === "script"));
 });
 
-test("yaml uses tree-sitter; helm falls back to the template-aware extractor", async () => {
-  const yaml = await treeSitterSkeleton(`apiVersion: v1\nmetadata:\n  name: x\nspec:\n  replicas: 3\n`, "/repo/a.yaml");
-  assert.equal(yaml.source, "tree-sitter");
-  assert.ok(yaml.symbols.some((s) => s.kind === "key" && s.name === "replicas"));
-
-  const helm = await treeSitterSkeleton(`apiVersion: v1\nmetadata:\n  name: {{ .Release.Name }}\n`, "/repo/a.yaml");
-  assert.equal(helm, undefined, "go-template yaml must not parse as plain yaml");
+test("yaml always takes the template-aware extractor", async () => {
   const { markupSkeleton } = await jiti.import("../extensions/index/index.ts");
-  const outline = markupSkeleton(`apiVersion: v1\nkind: Deployment\nmetadata:\n  name: {{ .Release.Name }}\n{{- with .Values.image }}\n  image: {{ .name }}\n{{- end }}\n`, "/repo/a.yaml");
-  assert.equal(outline.source, "regex");
-  assert.deepEqual((outline.symbols ?? []).map((s) => s.name), ["apiVersion", "kind", "metadata", "name", "image"]);
 
+  // Plain YAML still gets an outline, and none of it goes through tree-sitter.
+  assert.equal(await treeSitterSkeleton(`a: 1\n`, "/repo/a.yaml"), undefined);
+  const plain = markupSkeleton(`apiVersion: v1\nmetadata:\n  name: x\nspec:\n  replicas: 3\n`, "/repo/a.yaml");
+  assert.equal(plain.source, "regex");
+  assert.deepEqual((plain.symbols ?? []).map((s) => s.name), ["apiVersion", "metadata", "name", "spec", "replicas"]);
+
+  // Go templates are not structure: directives vanish, inline actions are stripped.
+  const helm = markupSkeleton(
+    `apiVersion: v1\nmetadata:\n  name: {{ .Release.Name }}-app\n{{- with .Values.image }}\n  image: {{ .name }}\n  tag: {{ .tag | default "latest" }}\n{{- end }}\n`,
+    "/repo/a.yaml",
+  );
+  assert.deepEqual((helm.symbols ?? []).map((s) => s.name), ["apiVersion", "metadata", "name", "image", "tag"]);
+
+  // Keys that live inside list items are kept, and repeats are not collapsed.
+  const list = markupSkeleton(`containers:\n  - name: app\n    image: nginx\n  - name: sidecar\n    image: busybox\n`, "/repo/a.yaml");
+  assert.deepEqual(
+    (list.symbols ?? []).map((s) => s.name),
+    ["containers", "name", "image", "name", "image"],
+  );
+
+  // Block scalar bodies are text, not keys.
+  const block = markupSkeleton(`data:\n  run.sh: |\n    #!/bin/sh\n    echo "key: value"\n  other: plain\n`, "/repo/a.yaml");
+  assert.deepEqual((block.symbols ?? []).map((s) => s.name), ["data", "run.sh", "other"]);
+
+  // `.tpl` helpers are symbols of their own.
   const tpl = markupSkeleton(`{{- define "app.fullname" -}}\n{{- end }}\n{{- define "app.labels" -}}\n{{- end }}\n`, "/repo/helpers.tpl");
   assert.deepEqual((tpl.symbols ?? []).filter((s) => s.kind === "define").map((s) => s.name), ["app.fullname", "app.labels"]);
 });

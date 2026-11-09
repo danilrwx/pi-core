@@ -103,9 +103,6 @@ const RULES: Record<string, Rule[]> = {
   shell: [
     { kind: "function", re: /^\s*(?:function\s+)?([\w-]+)\s*\(\)\s*\{?/, name: 1 },
   ],
-  yaml: [
-    { kind: "key", re: /^([A-Za-z0-9_.-]+)\s*:/, name: 1 },
-  ],
   markdown: [
     { kind: "heading", re: /^(#{1,6})\s+(.+)$/, name: 2 },
   ],

@@ -105,7 +105,7 @@ when needed.
 
 | Extension | What it does |
 |---|---|
-| [`index`](extensions/index) | File skeleton with imports, declarations, methods, and line ranges. Tree-sitter first for C, C++, C#, Go, Rust, TS/JS/TSX, Python, Java, Kotlin, Ruby, PHP, Lua, Scala, Swift, Dart, Zig, Elixir, plus JSON/TOML/YAML keys, HTML/Vue elements, and CSS rules; Helm templates (`.tpl` / go-templated YAML) and Markdown headings fall back to a regex extractor; then LSP `documentSymbols`. |
+| [`index`](extensions/index) | File skeleton with imports, declarations, methods, and line ranges. Tree-sitter first for C, C++, C#, Go, Rust, TS/JS/TSX, Python, Java, Kotlin, Ruby, PHP, Lua, Scala, Swift, Dart, Zig, Elixir, plus JSON/TOML keys, HTML/Vue elements, and CSS rules; then a template-aware indentation extractor for every `.yaml`/`.yml`/`.tpl` (Helm actions, list-item keys and block scalars all handled) and Markdown headings; then LSP `documentSymbols`. |
 | [`bash-head-tail`](extensions/bash-head-tail) | When bash output is truncated to a tail, reads the beginning of the full log (80 lines / 12 KiB) and puts it before the tail. |
 | [`partial-output`](extensions/partial-output) | Labels aborted/timed-out bash and codemode output as partial, preserving the streamed text and exit code 130/124. |
 | [`rtk`](extensions/rtk) | Rewrites safe `bash` commands through `rtk rewrite`: `git`, `cargo`, `rg`, `find`, `kubectl`, `docker`, and friends. Fail-open; skips compound commands, inline scripts, and unsafe `find` predicates. |

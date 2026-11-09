@@ -27,8 +27,7 @@
     "vendor/tree-sitter-languages/LICENSE-tree-sitter-html.txt": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
     "vendor/tree-sitter-languages/LICENSE-tree-sitter-css.txt": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78",
     "vendor/tree-sitter-languages/LICENSE-tree-sitter-toml.txt": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46",
-    "vendor/tree-sitter-languages/LICENSE-tree-sitter-vue.txt": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46",
-    "vendor/tree-sitter-languages/LICENSE-tree-sitter-yaml.txt": "2d181298822a124f6d106118dcc69c8d4d26ac668559be29682c452e712b0947"
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-vue.txt": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46"
   },
   "sources": [
     {
@@ -314,21 +313,6 @@
         {
           "path": "skills/session-query/SKILL.md",
           "sha256": "1ab509b52d1eb9a65b7467d9867878c135ca7fd4808c95576ed667ead10fc67d",
-          "modified": false
-        }
-      ]
-    },
-    {
-      "id": "tree-sitter-yaml",
-      "kind": "npm",
-      "package": "@tree-sitter-grammars/tree-sitter-yaml",
-      "version": "0.7.1",
-      "commit": "9632edc32eb86966a482fcb3c9a7f4bb78ae0ddb",
-      "license": "vendor/tree-sitter-languages/LICENSE-tree-sitter-yaml.txt",
-      "files": [
-        {
-          "path": "vendor/tree-sitter-languages/tree-sitter-yaml.wasm",
-          "sha256": "e752dc21c3591df9b45692fe417d101f45d1828c28c44d79005f4066dc7e4e91",
           "modified": false
         }
       ]

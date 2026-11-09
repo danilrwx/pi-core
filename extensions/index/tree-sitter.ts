@@ -50,7 +50,7 @@ const TS_GRAMMARS: Record<string, string> = {
   go: "go", typescript: "typescript", tsx: "tsx", javascript: "javascript",
   rust: "rust", python: "python", java: "java", kotlin: "kotlin", ruby: "ruby",
   php: "php", lua: "lua", dart: "dart", swift: "swift",
-  json: "json", html: "html", css: "css", toml: "toml", vue: "vue", yaml: "yaml",
+  json: "json", html: "html", css: "css", toml: "toml", vue: "vue",
 };
 
 /** tree-sitter node type → symbol kind, for declarations whose name is the `name` field. */
@@ -329,12 +329,6 @@ function describe(node: Node, language: string): Declaration | undefined {
       return { kind: "media", name: query ? compact(query.text) : "media" };
     }
   }
-  if (language === "yaml") {
-    if (type === "block_mapping_pair" || type === "flow_pair") {
-      const key = node.childForFieldName("key")?.text;
-      if (key?.trim()) return { kind: "key", name: compact(key) };
-    }
-  }
   if (language === "toml") {
     if (type === "table" || type === "table_array_element") {
       const key = findChild(node, "bare_key") ?? findChild(node, "dotted_key");
@@ -413,7 +407,7 @@ function importLines(lines: string[], language: string): string[] {
 
 export async function treeSitterSkeleton(text: string, file: string): Promise<Skeleton | undefined> {
   const languageName = languageOf(file);
-  if (languageName === "yaml" && /{{/.test(text)) return; // Helm templates are Go-flavoured; use the regex extractor.
+  if (languageName === "yaml" || languageName === "helm") return; // handled by markupSkeleton
   const grammar = TS_GRAMMARS[languageName];
   if (!grammar) return;
   const parser = await tsParser(grammar);
@@ -463,64 +457,80 @@ export async function treeSitterSkeleton(text: string, file: string): Promise<Sk
 }
 
 export { importLines };
-
 /**
- * Regex outline for YAML and Helm, used when tree-sitter is unavailable or the
- * file carries Go templates (`{{ ... }}`) that the YAML grammar cannot parse.
- * YAML keys are extracted by indentation; template directive lines are skipped
- * and inline actions are stripped so a key like `name: {{ .Release.Name }}`
- * still yields `name`. Helm `.tpl` files additionally report `define` names.
+ * Outline for YAML and Helm. Every `.yaml` / `.yml` / `.tpl` file goes through
+ * this extractor, never through tree-sitter: the YAML grammar rejects Go
+ * templates (`{{ ... }}`), and a Helm chart is the common case, so a single
+ * template-aware path is more predictable than two that disagree.
+ *
+ * Keys come from indentation, so a key that only appears inside a list item
+ * (`- name: app`) or carries an inline action (`name: {{ .Release.Name }}`)
+ * is still reported. Template directives are dropped as structure, except
+ * `define` / `template` in `.tpl` files, which become symbols themselves.
+ * Block scalars (`|`, `>`) are skipped so their text is not read as keys.
  */
 export function markupSkeleton(text: string, file: string): Skeleton | undefined {
   const language = languageOf(file);
   if (language !== "yaml" && language !== "helm") return;
   const lines = text.split(/\r?\n/);
+  const templated = language === "helm" || /\{\{/.test(text);
   const symbols: SkeletonSymbol[] = [];
-  const seen = new Set<string>();
 
-  const isDirective = (line: string) => /^\s*{{[-]?/.test(line);
-  const strip = (line: string) => line.replace(/{{[-]?[^}]*[-]?}}/g, "").trim();
+  // Effective indentation: a sequence dash counts as two columns so children of
+  // `- name: app` (indented past the dash) still rank below the item itself.
+  const indentOf = (line: string) => {
+    const spaces = (line.match(/^\s*/) ?? [""])[0].length;
+    return /^\s*-\s/.test(line) ? spaces + 2 : spaces;
+  };
 
+  let blockIndent = -1; // inside a `|` / `>` scalar, keys are just text
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    if (!raw.trim() || /^\s*#/.test(raw)) continue;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
 
-    if (language === "helm") {
-      const define = /{{-?\s*(?:define|template)\s+"([^"]+)"/.exec(raw);
+    if (templated) {
+      const define = /^\s*\{\{-?\s*(?:define|template)\s+"([^"]+)"/.exec(raw);
       if (define) {
-        const key = `define:${i}:${define[1]}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          symbols.push({ line: i + 1, end: i + 1, indent: 0, kind: "define", name: define[1], signature: compact(raw) });
-        }
+        symbols.push({
+          line: i + 1, end: i + 1, indent: 0, kind: "define", name: define[1], signature: compact(raw),
+        });
       }
+      if (/^\s*\{\{-?/.test(raw)) continue; // {{- with ... }}, {{- end }}, ...
     }
 
-    if (isDirective(raw)) continue; // {{- with ... }}, {{ end }}, {{- end }}
-    const clean = strip(raw);
-    if (!clean) continue;
-    const match = /^(\s*)([A-Za-z0-9_.-]+)\s*:(?:\s+.*)?$/.exec(clean);
+    const indent = indentOf(raw);
+    if (blockIndent >= 0) {
+      if (indent > blockIndent) continue;
+      blockIndent = -1;
+    }
+
+    const match = /^\s*(?:-\s+)?("[^"]*"|'[^']*'|[A-Za-z0-9_$][\w.$/-]*)\s*:(?=\s|$)/.exec(raw);
     if (!match) continue;
-    const indent = (match[1] ?? "").length;
-    const name = match[2];
-    const key = `${indent}:${name}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    symbols.push({ line: i + 1, end: yamlEnd(lines, i, indent), indent, kind: "key", name, signature: compact(raw) });
+
+    const name = match[1].replace(/^["']|["']$/g, "");
+    const rest = raw.slice(match[0].length).replace(/\{\{[-]?[^}]*[-]?\}\}/g, "").trim();
+    symbols.push({ line: i + 1, end: yamlEnd(lines, i, indent, indentOf), indent, kind: "key", name, signature: compact(raw) });
+    if (/^[|>][-+0-9]*$/.test(rest)) blockIndent = indent;
   }
 
   if (!symbols.length) return;
   symbols.sort((a, b) => a.line - b.line);
-  return { language, imports: [], symbols: symbols.slice(0, MAX_SYMBOLS * 2), lines: lines.length, source: "regex" };
+  return {
+    language,
+    imports: [],
+    symbols: symbols.slice(0, MAX_SYMBOLS * 2),
+    lines: lines.length,
+    source: "regex",
+  };
 }
 
-function yamlEnd(lines: string[], start: number, indent: number): number {
+function yamlEnd(lines: string[], start: number, indent: number, indentOf: (line: string) => number): number {
   let end = start + 1;
   for (let i = start + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (!line.trim() || /^\s*#/.test(line) || /^\s*{{[-]?/.test(line)) continue;
-    const current = (line.match(/^\s*/) ?? [""])[0].length;
-    if (current <= indent) break;
+    if (!line.trim() || /^\s*#/.test(line) || /^\s*\{\{-?/.test(line)) continue;
+    if (indentOf(line) <= indent) break;
     end = i + 1;
   }
   return end;
