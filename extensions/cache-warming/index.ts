@@ -24,14 +24,22 @@ export function warmingDecision(input: WarmingInput): WarmingAction {
   return "warm";
 }
 
+/** Parse a numeric environment override; invalid values fall back instead of poisoning a limit with NaN. */
+export function envNumber(name: string, fallback: number, env: NodeJS.ProcessEnv = process.env, min = 0): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(min, value) : fallback;
+}
+
 export default function cacheWarming(pi: ExtensionAPI) {
   let enabled = process.env.PI_CACHE_WARM_POLICY !== "0";
   let active = false;
   let lastActivity = Date.now();
   let warmSpent = 0;
-  const maxIdleMs = Math.max(60_000, Number(process.env.PI_CACHE_WARM_IDLE_MINUTES ?? 30) * 60_000);
-  const maxIdleCost = Math.max(0, Number(process.env.PI_CACHE_WARM_IDLE_BUDGET ?? 0.05));
-  const minSavings = Math.max(0, Number(process.env.PI_CACHE_WARM_MIN_SAVINGS ?? 0.005));
+  const maxIdleMs = Math.max(60_000, envNumber("PI_CACHE_WARM_IDLE_MINUTES", 30) * 60_000);
+  const maxIdleCost = envNumber("PI_CACHE_WARM_IDLE_BUDGET", 0.05);
+  const minSavings = envNumber("PI_CACHE_WARM_MIN_SAVINGS", 0.005);
 
   const touch = () => { lastActivity = Date.now(); warmSpent = 0; };
   pi.on("session_start", () => { touch(); active = false; });

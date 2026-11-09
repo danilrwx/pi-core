@@ -211,7 +211,12 @@ export default function imagePreview(pi: ExtensionAPI) {
     let added = false;
     for (const part of event.content.filter((part) => part.type === "image").slice(0, 2)) {
       if (part.type !== "image") continue;
-      const image = await previewData(part.data, part.mimeType, `${event.toolName} image`);
+      let image;
+      try {
+        image = await previewData(part.data, part.mimeType, `${event.toolName} image`);
+      } catch {
+        continue; // A malformed image must not break the tool result or the gallery.
+      }
       if (generation !== epoch) return;
       if (image) { returned.push(image); added = true; }
     }

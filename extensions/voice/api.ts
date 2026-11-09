@@ -47,9 +47,20 @@ export class ApiDictation implements DictationSession {
 
   async transcribe(): Promise<string> {
     if (!this.capture || !this.stream) throw new Error("Dictation was not started");
-    await this.capture.close();
-    if (this.cancelled) throw new Error("Dictation cancelled");
-    if (this.failed) throw this.failed;
+    try {
+      await this.capture.close();
+    } catch (error) {
+      await this.stream.close().catch(() => {});
+      throw error;
+    }
+    if (this.cancelled) {
+      await this.stream.close().catch(() => {});
+      throw new Error("Dictation cancelled");
+    }
+    if (this.failed) {
+      await this.stream.close().catch(() => {});
+      throw this.failed;
+    }
     if (!this.capture.voiced || this.capture.bytes < 9600) {
       await this.stream.close();
       throw new Error("Recording is too short or silent; nothing inserted");

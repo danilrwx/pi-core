@@ -14,3 +14,12 @@ test("cache warming is limited by idle age, budget and expected savings", () => 
   assert.equal(warmingDecision({ ...base, warmSpent: 0.05 }), "stop");
   assert.equal(warmingDecision({ ...base, missCost: 0.01 }), "stop", "a small cache miss is not worth warming");
 });
+
+test("cache warming env overrides reject invalid numbers", async () => {
+  const { envNumber } = await jiti.import("../extensions/cache-warming/index.ts");
+  assert.equal(envNumber("X", 30, { X: "10" }), 10);
+  assert.equal(envNumber("X", 30, { X: "abc" }), 30);
+  assert.equal(envNumber("X", 30, { X: "" }), 30);
+  assert.equal(envNumber("X", 30, { X: "-4" }), 0);
+  assert.equal(Number.isFinite(envNumber("X", 30, { X: "NaN" })), true);
+});

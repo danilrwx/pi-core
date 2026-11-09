@@ -35,6 +35,7 @@ interface CallResult {
   isError: boolean;
   durationMs?: number;
   text: string;
+  images: any[];
   truncated: boolean;
 }
 
@@ -46,9 +47,18 @@ function textOf(result: any): string {
     .join("\n");
 }
 
+function imagesOf(result: any): any[] {
+  if (!Array.isArray(result?.content)) return [];
+  return result.content.filter((part: any) =>
+    part?.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string");
+}
+
 function truncate(text: string, limit: number): { text: string; truncated: boolean } {
   if (text.length <= limit) return { text, truncated: false };
-  return { text: `${text.slice(0, limit)}\n… [truncated; use the tool directly for the rest]`, truncated: true };
+  if (limit <= 0) return { text: "", truncated: true };
+  const suffix = "\n… [truncated; use the tool directly for the rest]";
+  if (limit <= suffix.length) return { text: text.slice(0, limit), truncated: true };
+  return { text: `${text.slice(0, limit - suffix.length)}${suffix}`, truncated: true };
 }
 
 function normalize(call: BatchCall): Record<string, unknown> {
@@ -65,6 +75,7 @@ async function runCall(call: BatchCall, context: ExtensionToolContext): Promise<
       isError: Boolean(outcome.isError),
       durationMs: outcome.durationMs,
       text: textOf(outcome.result),
+      images: imagesOf(outcome.result),
       truncated: false,
     };
   } catch (error) {
@@ -72,6 +83,7 @@ async function runCall(call: BatchCall, context: ExtensionToolContext): Promise<
       tool: call.tool,
       isError: true,
       text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+      images: [],
       truncated: false,
     };
   }
@@ -81,15 +93,25 @@ function formatResults(calls: BatchCall[], results: CallResult[]): { content: an
   const content: any[] = [];
   const summary = [`Batch: ${results.filter((result) => !result.isError).length}/${results.length} succeeded`];
   let total = 0;
+  let imageCount = 0;
   const details: any[] = [];
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     const label = `${i + 1}. ${result.tool}${result.isError ? " (failed)" : ""}`;
     const remaining = Math.max(0, MAX_TOTAL_CHARS - total);
-    const limited = truncate(result.text || "(no output)", Math.min(MAX_CHARS_PER_CALL, remaining));
+    const limited = truncate(result.text || (result.images.length ? "(image attached below)" : "(no output)"), Math.min(MAX_CHARS_PER_CALL, remaining));
     total += limited.text.length;
     summary.push(`## ${label}`, limited.text);
-    if (!limited.text) summary.push("(no output)");
+    if (!limited.text && result.text) summary.push("[omitted: batch output budget reached]");
+    let imagesAdded = 0;
+    for (const image of result.images) {
+      if (imageCount >= MAX_IMAGES) break;
+      content.push({ type: "text" as const, text: `Image ${imageCount + 1} from call ${i + 1} (${result.tool}):` });
+      content.push(image);
+      imageCount++;
+      imagesAdded++;
+    }
+    if (result.images.length > imagesAdded) summary.push(`[${result.images.length - imagesAdded} more image(s) omitted]`);
     details.push({
       index: i + 1,
       tool: calls[i].tool,
@@ -97,10 +119,11 @@ function formatResults(calls: BatchCall[], results: CallResult[]): { content: an
       durationMs: result.durationMs,
       truncated: result.truncated || limited.truncated,
       bytes: result.text.length,
+      images: imagesAdded,
     });
   }
-  content.push({ type: "text" as const, text: summary.join("\n") });
-  return { content, details: { calls: details, totalChars: total }, isError: results.length > 0 && results.every((result) => result.isError) };
+  content.unshift({ type: "text" as const, text: summary.join("\n") });
+  return { content, details: { calls: details, totalChars: total, images: imageCount }, isError: results.length > 0 && results.every((result) => result.isError) };
 }
 
 export default function batchExtension(pi: ExtensionAPI): void {

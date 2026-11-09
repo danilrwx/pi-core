@@ -69,3 +69,19 @@ test("batch reports partial failures without hiding successes", async () => {
   assert.match(result.content[0].text, /grep \(failed\)/);
   assert.match(result.content[0].text, /bad pattern/);
 });
+
+test("batch preserves image content from read calls", async () => {
+  const definition = load();
+  const image = { type: "image", data: "aGVsbG8=", mimeType: "image/png" };
+  const context = {
+    signal: undefined,
+    async executeTool() {
+      return { isError: false, result: { content: [image] } };
+    },
+  };
+  const result = await definition.execute("id", { tool_calls: [{ tool: "read", parameters: { path: "a.png" } }] }, undefined, undefined, context);
+  assert.equal(result.isError, false);
+  assert.equal(result.details.images, 1);
+  assert.ok(result.content.some((part) => part.type === "image"));
+  assert.match(result.content[0].text, /image attached below/);
+});

@@ -164,3 +164,12 @@ test("Jev recall uses summaries, caches decisions and falls back to keywords on 
     if (previous === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous;
   }
 });
+
+test("auto-memory refuses secret-looking requests", async () => {
+  const { autoCandidate, looksLikeSecret } = await jiti.import("../extensions/memory/index.ts");
+  assert.equal(autoCandidate("remember that we use pnpm"), "remember that we use pnpm");
+  assert.equal(autoCandidate("запомни: API key = sk-1234567890abcdefghijklmnop"), undefined);
+  assert.equal(autoCandidate("remember password: correct horse battery staple"), undefined);
+  assert.equal(looksLikeSecret("-----BEGIN OPENSSH PRIVATE KEY-----"), true);
+  assert.equal(looksLikeSecret("deploy to staging first"), false);
+});

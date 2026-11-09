@@ -10,6 +10,8 @@ export interface Skeleton { language: string; imports: string[]; symbols: Skelet
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_SYMBOLS = 150;
+const MAX_TS_NODES = 50_000;
+const MAX_TS_DEPTH = 512;
 const NOISE = new Set(["if", "for", "while", "switch", "catch", "return", "else", "new", "typeof", "await"]);
 
 const LANGUAGES: Record<string, string> = {
@@ -251,7 +253,9 @@ export async function treeSitterSkeleton(text: string, file: string): Promise<Sk
     const declarations = DECLARATIONS[languageName] ?? {};
     const found: SkeletonSymbol[] = [];
     const seen = new Set<string>();
+    let visited = 0;
     const walk = (node: Node, depth: number) => {
+      if (++visited > MAX_TS_NODES || depth > MAX_TS_DEPTH) return;
       const kind = languageName === "elixir" ? elixirDeclaration(node) : declarations[node.type];
       let nextDepth = depth;
       if (kind) {
@@ -381,15 +385,17 @@ export function formatSkeleton(file: string, sk: Skeleton, cwd: string): string 
 }
 
 async function lspSkeleton(cwd: string, file: string, text: string): Promise<Skeleton | undefined> {
+  let timer: NodeJS.Timeout | undefined;
   try {
     const { getOrCreateManager } = await import("../lsp-pi/lsp-core.js");
     const manager = getOrCreateManager(cwd);
     const symbols = await Promise.race([
       manager.getDocumentSymbols(file),
-      new Promise<any[]>((resolve) => { const timer = setTimeout(() => resolve([]), 8_000); timer.unref(); }),
+      new Promise<any[]>((resolve) => { timer = setTimeout(() => resolve([]), 8_000); timer.unref(); }),
     ]);
     return fromLspSymbols(symbols, file, text);
   } catch { return; }
+  finally { if (timer) clearTimeout(timer); }
 }
 
 export default function skeletonExtension(pi: ExtensionAPI) {

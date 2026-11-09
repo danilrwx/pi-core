@@ -26,11 +26,25 @@ function messageText(message: any): string {
   if (!Array.isArray(message?.content)) return "";
   return message.content.filter((part: any) => part?.type === "text").map((part: any) => String(part.text ?? "")).join(" ");
 }
-function autoCandidate(text: string): string | undefined {
+const SECRET_PATTERNS = [
+  /\b(?:api[_ -]?key|access[_ -]?key|secret|token|password|passwd|private[_ -]?key|client[_ -]?secret|bearer)\b[^\n]{0,40}?[:=]\s*[^\n]{8,}/i,
+  /\b(?:sk|pk|ghp|gho|ghu|ghs|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+];
+
+/** Auto-memory is heuristic; never let an explicit "remember" turn a secret into a durable note. */
+export function looksLikeSecret(text: string): boolean {
+  return SECRET_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function autoCandidate(text: string): string | undefined {
   const clean = text.replace(/\s+/g, " ").trim();
   if (clean.length < 8 || clean.length > 4000 || clean.startsWith("/")) return;
   // Only explicit memory requests, never ordinary task instructions.
   if (!/(?:^|\b)(?:remember|запомни|впредь|from now on|always use|never use|я предпочитаю|i prefer\b)/i.test(clean)) return;
+  if (looksLikeSecret(clean)) return;
   return clean;
 }
 

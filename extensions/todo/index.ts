@@ -8,7 +8,6 @@ const ENTRY = "pi-core:todo";
 
 export default function todo(pi: ExtensionAPI) {
   const states = new Map<string, Todo[]>();
-  let activeSession: string | undefined;
   let collapsed = false;
   let panel: TodoPanel | undefined;
   let ctx: ExtensionContext | undefined;
@@ -36,7 +35,6 @@ export default function todo(pi: ExtensionAPI) {
     const id = sessionId();
     if (!id) return;
     states.set(id, todos);
-    activeSession = id;
     if (!todos.length) clearPending.delete(id);
     if (save) pi.appendEntry(ENTRY, { todos, updatedAt: new Date().toISOString() });
     render();
@@ -44,7 +42,6 @@ export default function todo(pi: ExtensionAPI) {
   function restore(_event: unknown, context: ExtensionContext) {
     ctx = context;
     const id = context.sessionManager.getSessionId();
-    activeSession = id;
     panel = undefined;
     let todos: Todo[] | undefined;
     for (const entry of context.sessionManager.getBranch()) {
@@ -77,9 +74,12 @@ export default function todo(pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", () => {
     const id = sessionId();
-    if (id) clearPending.delete(id);
+    if (id) {
+      states.delete(id);
+      clearPending.delete(id);
+    }
     if (ctx?.mode === "tui") ctx.ui.setWidget("todo", undefined);
-    panel = undefined; activeSession = undefined; ctx = undefined;
+    panel = undefined; ctx = undefined;
   });
 
   pi.registerTool({
