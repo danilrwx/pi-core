@@ -19,7 +19,8 @@ npm/git-зависимости. Для новых agent-features нужен **pi
 
 Фоновые shell-команды проходят **ту же session-only/global permission-политику**,
 что и bash: запрос через внутренний event bus к `permission`. Если расширение
-permission не активно, запуск **блокируется**, включая вызовы из codemode.
+permission не активно, обычные команды разрешаются, а intrinsically dangerous
+команды блокируются по AST; без permission-слоя это последняя защита.
 Используется настроенный shell; `shellCommandPrefix` берётся с учётом project trust
 и тоже входит в проверяемую команду. Это не OS sandbox.
 

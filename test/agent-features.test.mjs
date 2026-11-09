@@ -70,7 +70,10 @@ test("job/monitor authorization uses live session policy and fails closed withou
   assert.equal((await stat(dirname(job.log))).mode & 0o777, 0o700);
   assert.match(f.messages.at(-1).content, /Untrusted external output/);
   await f.emit("session_shutdown", { reason: "reload" }, f.ctx);
-  await assert.rejects(f.call("background_job", { action: "start", name: "no-policy", command: "true" }), /permission extension/);
+  const unguarded = await f.call("background_job", { action: "start", name: "no-policy", command: "true" });
+  assert.equal(unguarded.details.name, "no-policy");
+  await f.call("background_job", { action: "stop", name: "no-policy" });
+  await assert.rejects(f.call("background_job", { action: "start", name: "no-policy-danger", command: "rm -rf /nonexistent-pi-core-test" }), /Dangerous background command/);
 });
 
 test("dangerous background commands remain blocked at high in headless mode", async (t) => {
