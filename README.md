@@ -5,7 +5,7 @@
 **A personal extension suite for [pi](https://github.com/earendil-works/pi) — built for long sessions, small context, and a terminal that stays out of the way.**
 
 ![pi](https://img.shields.io/badge/pi-%E2%89%A5%201.3.0-6f42c1)
-![tests](https://img.shields.io/badge/tests-223%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6)
 ![platform](https://img.shields.io/badge/platform-Unix-lightgrey)
 
@@ -29,30 +29,47 @@ The code here is maintained as **our own source copies**. Third-party work is ve
 
 ## Quick start
 
+Install straight from git:
+
+```sh
+pi install git:github.com/danilrwx/pi-core.git
+```
+
+Then reload with `/reload`. That is the whole install: the package manifest
+declares the recommended extensions, and pi installs the git checkout and its
+npm dependencies together.
+
+To pin an exact revision, append a commit or tag:
+
+```sh
+pi install git:github.com/danilrwx/pi-core.git@<commit>
+```
+
+### Local checkout
+
+For development, use a local path so edits are picked up by `/reload`:
+
 ```sh
 git clone https://github.com/danilrwx/pi-core.git
 cd pi-core
 npm ci --ignore-scripts
+pi install ./pi-core
 ```
 
-Add the local package to `~/.pi/agent/settings.json`:
+To expose only the local `session-query` skill (instead of every skill under
+`skills/`), set the resulting package entry to:
 
 ```json
 {
   "packages": [
-    {
-      "source": "/absolute/path/to/pi-core",
-      "skills": ["skills/session-query"]
-    }
+    { "source": "/absolute/path/to/pi-core", "skills": ["skills/session-query"] }
   ]
 }
 ```
 
-The package manifest exposes the recommended extension set. Optional extensions such as `permission`, `context`, and `interactive-shell` are intentionally not loaded by default and can be added as explicit extension paths later. The `skills` filter exposes only the local `session-query` skill; remove the filter if you want every skill under `skills/`.
-
-`pi install /absolute/path/to/pi-core` also works and writes the same package source. Add the `skills` filter to the resulting package entry if you want only `session-query` instead of every local skill.
-
-Reload pi with `/reload`.
+Optional extensions such as `permission`, `context`, and `interactive-shell` are
+intentionally not in the default manifest; add them as explicit extension paths
+when needed.
 
 > **Requirements:** pi `>= 1.3.0`, Node `>= 22.19.0`, and a Unix host for background jobs. `rtk`, `golangci-lint`, LSP servers, Neovim, Kitty/tmux, `pw-record`, and `whisper-cli` are optional — each only matters when its extension is used.
 
@@ -88,7 +105,7 @@ Reload pi with `/reload`.
 
 | Extension | What it does |
 |---|---|
-| [`index`](extensions/index) | File skeleton with imports, declarations, methods, and line ranges. Tree-sitter first where a grammar exists (C, C++, C#, Scala, Zig, Elixir), then LSP `documentSymbols`, then a regex fallback. |
+| [`index`](extensions/index) | File skeleton with imports, declarations, methods, and line ranges. Tree-sitter first for C, C++, C#, Go, Rust, TS/JS/TSX, Python, Java, Kotlin, Ruby, PHP, Lua, Scala, Swift, Dart, Zig, and Elixir; then LSP `documentSymbols`; then a regex fallback. |
 | [`bash-head-tail`](extensions/bash-head-tail) | When bash output is truncated to a tail, reads the beginning of the full log (80 lines / 12 KiB) and puts it before the tail. |
 | [`partial-output`](extensions/partial-output) | Labels aborted/timed-out bash and codemode output as partial, preserving the streamed text and exit code 130/124. |
 | [`rtk`](extensions/rtk) | Rewrites safe `bash` commands through `rtk rewrite`: `git`, `cargo`, `rg`, `find`, `kubectl`, `docker`, and friends. Fail-open; skips compound commands, inline scripts, and unsafe `find` predicates. |

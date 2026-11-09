@@ -59,13 +59,28 @@ The `web-tree-sitter` runtime is pinned to 0.25.10 in package.json/package-lock.
 - WASM SHA-256:
   `8292919c88a0f7d3fb31d0cd0253ca5a9531bc1ede82b0537f2c63dd8abe6a7a`
 
-Tree-sitter grammars were copied from the `tree-sitter-wasms@0.1.13` tarball:
-`tree-sitter-c@0.20.7` (`df6ac34d5eb1dccfac8f2a9011a8491300818d7c`),
-`tree-sitter-cpp@0.20.4` (`51da29228ea1d137d196edd1b41149f325cc6ecb`),
-`tree-sitter-c-sharp@0.20.0` (`7a47daeaf0d410dd1a91c97b274bb7276dd96605`),
-`tree-sitter-scala@0.19.0` (`262797b1dfe0303818c2418c0a88f6be65f37245`),
-`@tree-sitter-grammars/tree-sitter-zig@1.0.0` (`21e2218e0ec7f4e3c0640d16bf8c67e6f0a61e18`),
-and `tree-sitter-elixir@0.1.1` (`11426c5fd20eef360d5ecaf10729191f6bc5d715`).
+Tree-sitter grammars were copied from the `tree-sitter-wasms@0.1.13` tarball.
+Each grammar is MIT and has its own `vendor/tree-sitter-languages/LICENSE-tree-sitter-*.txt`:
+
+- `tree-sitter-c@0.20.7` (`df6ac34d5eb1dccfac8f2a9011a8491300818d7c`)
+- `tree-sitter-cpp@0.20.4` (`51da29228ea1d137d196edd1b41149f325cc6ecb`)
+- `tree-sitter-c-sharp@0.20.0` (`7a47daeaf0d410dd1a91c97b274bb7276dd96605`)
+- `tree-sitter-go@0.20.0` (`bbaa67a180cfe0c943e50c55130918be8efb20bd`)
+- `tree-sitter-java@0.20.2` (`2b57cd9541f9fd3a89207d054ce8fbe72657c444`)
+- `tree-sitter-javascript@0.20.3` (`6d84193ae2395e54b699d9b7358bcf66cbcc19f5`)
+- `tree-sitter-kotlin@0.3.1` (`be65fd695273434d91d1ca3829097b1211992a84`)
+- `tree-sitter-lua@2.1.3` (`6b02dfd7f07f36c223270e97eb0adf84e15a4cef`)
+- `tree-sitter-php@0.22.0` (`c7fb0aab36320fff216b514868694427ad7868f6`)
+- `tree-sitter-python@0.21.0` (`0f9047c857ed0990931b1f899c7d3bf403703147`)
+- `tree-sitter-ruby@0.20.1` (`7a010836b74351855148818d5cb8170dc4df8e6a`)
+- `tree-sitter-rust@0.20.4` (`afb6000a71fb9dff3f47f90d412ec080ae12bbb4`)
+- `tree-sitter-scala@0.19.0` (`262797b1dfe0303818c2418c0a88f6be65f37245`)
+- `tree-sitter-swift@0.4.0` (`1c586339fb00014b23d6933f2cc32b588a226f3b`)
+- `tree-sitter-typescript@0.20.5` (`7db8390a16a2cae317f4f4423a7b642cd4cad8c9`) — also `tsx`
+- `@tree-sitter-grammars/tree-sitter-zig@1.0.0` (`21e2218e0ec7f4e3c0640d16bf8c67e6f0a61e18`)
+- `tree-sitter-elixir@0.1.1` (`11426c5fd20eef360d5ecaf10729191f6bc5d715`)
+- `tree-sitter-dart` from `github:UserNobody14/tree-sitter-dart` (unpinned by upstream; MIT)
+
 The licenses are kept next to the WASM files. No grammar build scripts were run.
 
 The `batch` tool is written locally. Maki `batch` (MIT) informed the

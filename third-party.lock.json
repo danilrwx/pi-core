@@ -10,7 +10,19 @@
     "vendor/tree-sitter-languages/LICENSE-tree-sitter-c.txt": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
     "vendor/tree-sitter-languages/LICENSE-tree-sitter-elixir.txt": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
     "vendor/tree-sitter-languages/LICENSE-tree-sitter-scala.txt": "1f95ed26e1f4074074c9c7083e61c0a9e4c3b9f435745044995f3beb4ed28575",
-    "vendor/tree-sitter-languages/LICENSE-tree-sitter-zig.txt": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727"
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-zig.txt": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-typescript.txt": "c873307dab492c1ea6e6d26bf43d0ef9aaac09447d25ff017b20e590f9c6ebe2",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-go.txt": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-dart.txt": "d270cb3a4985d75033bd77d875ccebff1d66e32788a3f727891e28d76132dd46",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-lua.txt": "07e1e910ecd175a9df2145e467f3827ac4fc710d893f24bdd78046026769a895",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-swift.txt": "3533cec129bb4bba015c0d61d86dd7c3b7e82110e4d2ff7837a01eff5bad5ccc",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-php.txt": "0e6225de0b737b9a3c3a3d52381989cc52025fe689dd036aaeb890beb7a593e5",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-python.txt": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-rust.txt": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-javascript.txt": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-ruby.txt": "ee006f02a3d856df282e409be2a86e24a65bb573a98b9c28343771141351bb6b",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-java.txt": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-kotlin.txt": "948495f61768f7de26bcc61113d8cd95f50bbc15adb678c28c941c6c8fcd5903"
   },
   "sources": [
     {
@@ -158,6 +170,71 @@
         {
           "path": "vendor/tree-sitter-languages/tree-sitter-elixir.wasm",
           "sha256": "82e91b9759ddca30d8978ebbfa8e347b4451b64c931f9ae62112e6db9b8fac20",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-go.wasm",
+          "sha256": "9963ca89b616eaf04b08a43bc1fb0f07b85395bec313330851f1f1ead2f755b6",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-typescript.wasm",
+          "sha256": "8515404dceed38e1ed86aa34b09fcf3379fff1b4ff9dd3967bcd6d1eb5ac3d8f",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-tsx.wasm",
+          "sha256": "6aa3b2c70e76f5d48eafef1093e9c4de383e13f2fdde2f4e9b98a378f6a8f1b6",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-javascript.wasm",
+          "sha256": "63812b9e275d26851264734868d27a1656bd44a2ef6eb3e85e6b03728c595ab5",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-rust.wasm",
+          "sha256": "4409921a70d0aa5bec7d1d7ce809a557a8ee1cf6ace901e3ac6a76e62cfea903",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-python.wasm",
+          "sha256": "9056d0fb0c337810d019fae350e8167786119da98f0f282aceae7ab89ee8253b",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-java.wasm",
+          "sha256": "637aac4415fb39a211a4f4292d63c66b5ce9c32fa2cd35464af4f681d91b9a1f",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-kotlin.wasm",
+          "sha256": "b5cb00c8d06ed0f10f1dbe497205b437809d7e87db1f638721a8cfb30e044449",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-ruby.wasm",
+          "sha256": "93a5022855314cdb45458c7bb026a24a0ebc3a5ff6439e542e881f14dfa13a39",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-php.wasm",
+          "sha256": "55bb617b6f01e14bab997861f0b20a2420cf6ba3199ffeb295b9ec398966d8a3",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-lua.wasm",
+          "sha256": "75ef809136d610068c5b2135741d89f5df62690a3d55169203351cb7cc85727d",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-dart.wasm",
+          "sha256": "7f5364e4256cf7e55efd01dd52421ef2663caa8061b82659b7e4bf61064545ec",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-swift.wasm",
+          "sha256": "41c4fdb2249a3aa6d87eed0d383081ff09725c2248b4977043a43825980ffcc7",
           "modified": false
         }
       ]
