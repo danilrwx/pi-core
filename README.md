@@ -216,50 +216,6 @@ API-режим требует уже установленный `pw-record`; whi
 качество распознавания и Nari-биллинг не проверяются. Streaming transcript
 появляется в строке статуса, но финальный текст вставляется после остановки.
 
-### Chat prefix completion DeepSeek (`prefix`) — **не подключено**
-
-Оставляю код и тесты в репозитории, но в `settings.json` расширение не
-включено: на `deepseek-flash` beta prefix выдаёт заметно хуже обычного
-продолжения диалога, и ниша у него узкая. Включается одной строкой в
-`extensions` при желании:
-
-```json
-"/home/danil/w/pi-core/extensions/prefix/index.ts"
-```
-
-Работает, **только если активная модель — DeepSeek через OpenAI-совместимый
-endpoint** (`provider: deepseek` / `api.deepseek.com`, `api: openai-completions`).
-Через OpenRouter или с Anthropic API команда откажется.
-
-```
-/prefix ```python\n     # продолжить с этого начала
-/prefix                  # продолжить последний ответ ассистента
-/prefix cancel
-/prefix insert           # вставить последний результат ещё раз
-```
-
-Как работает: берётся активная ветка диалога, сериализуется в OpenAI-формат,
-последним сообщением добавляется `assistant` с твоим началом и `prefix: true`.
-Запрос идёт на `https://api.deepseek.com/beta/chat/completions` (beta нужен
-только для этой фичи), стримится в виджет, затем готовый текст вставляется в
-черновик редактора. Enter ты нажимаешь сам; в историю ничего не пишется,
-инструменты не выполняются.
-
-Ограничения:
-
-- Это не автоматический режим основного цикла: pi требует, чтобы запрос
-  заканчивался `user`/`toolResult`, а prefix completion — чтобы заканчивался
-  `assistant`. Поэтому — явная команда, а не невидимая подмена.
-- Модель возвращает **только продолжение**, поэтому в черновик вставляется
-  начало + продолжение.
-- История обрезается до текста: изображения и thinking не отправляются;
-  tool calls/results конвертируются в OpenAI-формат (без tools-схем).
-- Стоимость считается по каталогу модели и показывается в уведомлении;
-  промпт-кеш DeepSeek может частично её уменьшить.
-- `deepseek-flash` проверен живым запросом; `deepseek-v4-pro` не тестировался.
-- Ключ берётся из credential store pi для этого провайдера; в логи не пишется.
-  Таймаут 120 с, `/prefix cancel` отменяет.
-
 ### Список задач (`todo`)
 
 Инструмент `todo_write` + панель над редактором, по мотивам Maki и rpiv-todo:
@@ -467,7 +423,7 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail и prefix completion (streaming, отмена, тело запроса на локальном HTTP-сервере).
+bash-head-tail и Claude-совместимая память (импорт, Markdown/frontmatter, auto-recall).
 
 ## Что пока не перенесено
 
