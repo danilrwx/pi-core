@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { jiti } from "./host.mjs";
 const { parseDiffHunks, buildStops, newFileStop, deletedLineCount } = await jiti.import("../extensions/nvim/plan.ts");
-const { planTour, default: nvimTour } = await jiti.import("../extensions/nvim/index.ts");
+const { planTour, resolveTourBase, default: nvimTour } = await jiti.import("../extensions/nvim/index.ts");
 
 function git(cwd, ...args) { return execFileSync("git", args, { cwd, encoding: "utf8" }); }
 async function repo() {
@@ -413,5 +413,85 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
     await rm(dir, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a tour of committed work falls back to the branch point instead of saying nothing changed", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-core-base-"));
+  try {
+    git(cwd, "init", "-q", "-b", "main");
+    git(cwd, "config", "user.email", "t@example.com");
+    git(cwd, "config", "user.name", "T");
+    await writeFile(join(cwd, "a.ts"), "line-1\nline-2\nline-3\n");
+    git(cwd, "add", "."); git(cwd, "commit", "-q", "-m", "init");
+    const mainSha = git(cwd, "rev-parse", "HEAD").trim();
+    git(cwd, "switch", "-q", "-c", "feature");
+    await writeFile(join(cwd, "a.ts"), "line-1\nline-2 changed\nline-3\nline-4\n");
+    git(cwd, "commit", "-qam", "feature work");
+
+    // Clean tree: HEAD alone would show nothing.
+    assert.equal(git(cwd, "diff", "--name-only", "HEAD").trim(), "");
+    const base = await resolveTourBase(cwd);
+    assert.equal(base, mainSha);
+    const plan = await planTour(cwd);
+    assert.equal(plan.base, mainSha);
+    assert.ok(plan.stops.length > 0, "the committed change must be part of the tour");
+
+    // Uncommitted work keeps HEAD as the base, and an explicit base wins.
+    await writeFile(join(cwd, "a.ts"), "line-1\nline-2 changed again\nline-3\nline-4\n");
+    assert.equal(await resolveTourBase(cwd), "HEAD");
+    assert.equal((await planTour(cwd, { base: mainSha })).base, mainSha);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("/tour start takes --base and explains an empty tour", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-core-base-cmd-"));
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-base-bin-"));
+  const log = join(dir, "requests.log");
+  const bin = join(dir, "fake-nvim");
+  await writeFile(bin, `#!${process.execPath}
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(JSON.parse(process.env.PI_TOUR_REQUEST)) + "\\n");
+process.stdout.write(JSON.stringify({ ok: true, result: { connected: true, file: "a.ts", from_line: 1, to_line: 2, text: "shown" } }) + "\\n");
+`);
+  execFileSync("chmod", ["755", bin]);
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
+  process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-base.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
+  try {
+    git(cwd, "init", "-q"); git(cwd, "config", "user.email", "t@example.com"); git(cwd, "config", "user.name", "T");
+    await writeFile(join(cwd, "a.ts"), "one\n");
+    git(cwd, "add", "."); git(cwd, "commit", "-q", "-m", "init");
+    const base = git(cwd, "rev-parse", "HEAD").trim();
+    await writeFile(join(cwd, "a.ts"), "one\ntwo\n");
+    git(cwd, "commit", "-qam", "second");
+
+    const commands = new Map(), messages = [];
+    nvimTour({
+      registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {},
+      sendMessage(message) { messages.push(message); },
+      registerCommand(name, command) { commands.set(name, command); },
+    });
+    const notified = [];
+    const context = {
+      cwd, mode: "tui", sessionManager: { getSessionId: () => "base-cmd" },
+      ui: { notify(text) { notified.push(text); }, setStatus() {} },
+    };
+    await commands.get("tour").handler(`start --base ${base}`, context);
+    const requests = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.ok(requests.some((request) => request.method === "install"));
+    assert.match(notified.at(-1), /Tour 1\//);
+
+    // Empty diff against the given base: say what was compared and how to fix it.
+    notified.length = 0;
+    await commands.get("tour").handler("start --base HEAD", context);
+    assert.match(notified.at(-1), /No changes against HEAD/);
+    assert.match(notified.at(-1), /--base origin\/main/);
+  } finally {
+    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
+    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+    await rm(cwd, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });

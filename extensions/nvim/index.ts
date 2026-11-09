@@ -36,9 +36,31 @@ function matches(file: string, paths?: string[]): boolean {
   return paths.some((path) => file === path || file.startsWith(`${path.replace(/\/$/, "")}/`));
 }
 
+/**
+ * Pick the base a tour without an explicit one should use.
+ *
+ * `HEAD` only covers uncommitted work, so a tour of a branch that is already
+ * committed found nothing and said "no changes" while the changes were clearly
+ * there. When the working tree is clean, fall back to the point where the
+ * branch left its upstream (or the local default branch).
+ */
+export async function resolveTourBase(cwd: string): Promise<string> {
+  const dirty = async (ref: string) => (await git(cwd, ["diff", "--name-only", ref]).catch(() => "")).trim();
+  if (await dirty("HEAD")) return "HEAD";
+  const untracked = (await git(cwd, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")).trim();
+  if (untracked) return "HEAD";
+  for (const candidate of ["origin/HEAD", "origin/main", "origin/master", "main", "master"]) {
+    try { await git(cwd, ["rev-parse", "--verify", "--quiet", candidate]); } catch { continue; }
+    const mergeBase = (await git(cwd, ["merge-base", candidate, "HEAD"]).catch(() => "")).trim();
+    if (!mergeBase) continue;
+    if (await dirty(mergeBase)) return mergeBase;
+  }
+  return "HEAD";
+}
+
 /** Build the tour from the working tree: staged/unstaged hunks plus untracked files. */
 export async function planTour(cwd: string, options: { paths?: string[]; base?: string; context?: number; maxStops?: number } = {}): Promise<TourPlan> {
-  const base = options.base ?? "HEAD";
+  const base = options.base ?? await resolveTourBase(cwd);
   const pathArgs = options.paths?.length ? ["--", ...options.paths] : [];
   let hasHead = true;
   try { await git(cwd, ["rev-parse", "--verify", base]); } catch { hasHead = false; }
@@ -56,6 +78,15 @@ export async function planTour(cwd: string, options: { paths?: string[]; base?: 
     extraAdded++;
   }
   return { stops, truncated: truncated + (extra.length - extraAdded), base };
+}
+
+/** Say what was compared, so an empty tour is not mistaken for a broken one. */
+function noChanges(base: string, paths: readonly string[]): string {
+  const where = paths.length ? ` in ${paths.join(", ")}` : "";
+  const hint = base === "HEAD"
+    ? "Nothing uncommitted. For committed work pass a base: /tour start --base origin/main"
+    : "Nothing to show for this base.";
+  return `No changes against ${base}${where}. ${hint}`;
 }
 
 export function overviewLines(plan: TourPlan, stat: string): string[] {
@@ -344,7 +375,7 @@ export default function nvimTour(pi: ExtensionAPI) {
       if (params.action === "overview") {
         const opened = await ensureNvim(context.cwd);
         const plan = await planTour(context.cwd, params);
-        if (!plan.stops.length) return { content: [{ type: "text", text: "No changes to review in the working tree." }], details: { ...plan } };
+        if (!plan.stops.length) return { content: [{ type: "text", text: noChanges(plan.base, params.paths ?? []) }], details: { ...plan } };
         const stat = await git(context.cwd, ["diff", "--stat", plan.base]).catch(() => "");
         await nvimRequest({ method: "snapshot", lines: overviewLines(plan, stat), filetype: "markdown" });
         return {
@@ -355,7 +386,7 @@ export default function nvimTour(pi: ExtensionAPI) {
       if (params.action === "start") {
         const opened = await ensureNvim(context.cwd);
         const plan = await planTour(context.cwd, params);
-        if (!plan.stops.length) return { content: [{ type: "text", text: "No changes to tour in the working tree." }], details: { ...plan } };
+        if (!plan.stops.length) return { content: [{ type: "text", text: noChanges(plan.base, params.paths ?? []) }], details: { ...plan } };
         const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: id };
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
@@ -532,12 +563,21 @@ export default function nvimTour(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("tour", {
-    description: "Review changed code in Neovim: /tour start [paths] | overview | next | prev | status | stop",
+    description: "Review changed code in Neovim: /tour start [--base <ref>] [paths] | overview | next | prev | status | stop",
     getArgumentCompletions: (prefix) => completeArgs(prefix, ["start", "overview", "next", "prev", "status", "stop", "live"], { live: ["on", "off"] },
-      { start: "walk stops one by one", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
+      { start: "walk stops one by one (--base <ref> for committed work)", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
     handler: async (args, context) => {
       ctx = context;
-      const [action = "status", ...paths] = args.trim().split(/\s+/).filter(Boolean);
+      const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      // `--base <ref>` picks what to compare against; the rest are paths.
+      let base: string | undefined;
+      const paths: string[] = [];
+      for (let index = 0; index < rest.length; index++) {
+        const token = rest[index];
+        if (token === "--base" || token === "-b") { base = rest[++index]; continue; }
+        if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
+        paths.push(token);
+      }
       if (action === "live") {
         const value = paths[0];
         if (value === "on" || value === "off") { liveFollow = value === "on"; context.ui.notify(`Live follow ${value === "on" ? "enabled" : "disabled"}.`, "info"); return; }
@@ -546,8 +586,8 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       if (action === "overview") {
         const opened = await ensureNvim(context.cwd);
-        const plan = await planTour(context.cwd, { paths });
-        if (!plan.stops.length) { context.ui.notify("No changes to review.", "info"); return; }
+        const plan = await planTour(context.cwd, { paths, base });
+        if (!plan.stops.length) { context.ui.notify(noChanges(plan.base, paths), "info"); return; }
         const stat = await git(context.cwd, ["diff", "--stat", plan.base]).catch(() => "");
         await nvimRequest({ method: "snapshot", lines: overviewLines(plan, stat), filetype: "markdown" });
         context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Snapshot: ${plan.stops.length} stops in ${new Set(plan.stops.map((stop) => stop.file)).size} files.`, "info");
@@ -555,8 +595,8 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       if (action === "start") {
         const opened = await ensureNvim(context.cwd);
-        const plan = await planTour(context.cwd, { paths });
-        if (!plan.stops.length) { context.ui.notify("No changes to tour.", "info"); return; }
+        const plan = await planTour(context.cwd, { paths, base });
+        if (!plan.stops.length) { context.ui.notify(noChanges(plan.base, paths), "info"); return; }
         const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: context.sessionManager.getSessionId() };
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
@@ -588,8 +628,8 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       if (action !== "next" && action !== "prev") { context.ui.notify("Usage: /tour start|overview|next|prev|status|stop", "info"); return; }
       const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
-      const base = remote && remote.index > 0 ? remote.index - 1 : current.index;
-      const target = base + (action === "next" ? 1 : -1);
+      const anchor = remote && remote.index > 0 ? remote.index - 1 : current.index;
+      const target = anchor + (action === "next" ? 1 : -1);
       if (target < 0 || target >= current.stops.length) { context.ui.notify("Tour finished.", "info"); return; }
       const shown = await nvimRequest<NvimResult>({ method: action === "next" ? "tour.next" : "tour.prev" });
       current.index = target;
