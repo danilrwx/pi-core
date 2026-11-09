@@ -172,6 +172,9 @@ Fingerprints сохраняются custom entries **вне model context** и �
 - `/checkpoint list` — список снимков; `/checkpoint restore <n|id>` — откатить код;
   `/rewind` — откатить код и перейти по ветке чата через `ctx.navigateTree()`;
   `/checkpoint off|on` — выключить/включить.
+- Инструмент `checkpoint` доступен и агенту: `list` и `restore`. Restore
+  **всегда требует подтверждения пользователя**; агент не может молча откатить
+  файлы и не должен вызывать его без явной просьбы.
 - Перед restore создаётся **safety checkpoint** текущего состояния, так что
   восстановление можно отменить повторным restore.
 - При обычном `/fork`/`/tree` хук `session_before_fork` предлагает восстановить

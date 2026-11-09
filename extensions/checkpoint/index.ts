@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import { completeArgs } from "../lib/complete.js";
 import {
   absolutePath, commitBlob, newCheckpointId, prune, restoreFile, snapshot,
@@ -49,7 +50,7 @@ function display(checkpoint: StoredCheckpoint, index: number, ctx: ExtensionCont
   return `${index + 1}. ${time} · ${label(ctx, checkpoint)} · ${checkpoint.data.files.length} file${checkpoint.data.files.length === 1 ? "" : "s"}${checkpoint.data.safety ? " · safety" : ""}`;
 }
 
-async function restoreTo(context: ExtensionCommandContext, target: StoredCheckpoint, all: StoredCheckpoint[], append: (customType: string, data: unknown) => void): Promise<{ restored: number; deleted: number; skipped: number }> {
+async function restoreTo(context: ExtensionContext, target: StoredCheckpoint, all: StoredCheckpoint[], append: (customType: string, data: unknown) => void): Promise<{ restored: number; deleted: number; skipped: number }> {
   const index = all.findIndex((item) => item.entryId === target.entryId);
   if (index === -1) return { restored: 0, deleted: 0, skipped: 0 };
   const selection = all.slice(index).reverse();
@@ -158,8 +159,45 @@ export default function checkpoint(pi: ExtensionAPI) {
     if (!target) return;
     const choice = await ctx.ui.confirm("Restore code checkpoint?", `${target.data.files.length} file${target.data.files.length === 1 ? "" : "s"} will be restored to before: ${label(ctx, target)}`);
     if (!choice) return;
-    const result = await restoreTo(ctx as ExtensionCommandContext, target, all, (type, data) => pi.appendEntry(type, data));
+    const result = await restoreTo(ctx, target, all, (type, data) => pi.appendEntry(type, data));
     ctx.ui.notify(`Checkpoint: restored ${result.restored}, deleted ${result.deleted}, skipped ${result.skipped}.`, result.skipped ? "warning" : "info");
+  });
+
+  pi.registerTool({
+    name: "checkpoint",
+    label: "Code checkpoints",
+    description: "List code checkpoints or restore files to a checkpoint. Restore always asks the user for confirmation. Use only when the user explicitly asks to undo or revert code; never restore silently.",
+    promptSnippet: "List or propose restoring a code checkpoint after the user asks to undo",
+    promptGuidelines: [
+      "When the user asks to undo recent file edits, call checkpoint action=list first and offer the relevant checkpoint.",
+      "Restore only after an explicit user request; the confirmation dialog is mandatory. Do not try to bypass it.",
+      "Checkpoints cover edit/write/propose_change only; changes made through bash or other tools are not restored.",
+    ],
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("restore")]),
+      target: Type.Optional(Type.String({ description: "Checkpoint number (1-based) or id for action=restore" })),
+    }, { additionalProperties: false }),
+    async execute(_id, params, _signal, _update, context) {
+      if (!enabled) return { content: [{ type: "text" as const, text: "Checkpoints are off; run /checkpoint on." }], details: {}, isError: true };
+      const all = loadCheckpoints(context);
+      if (!all.length) return { content: [{ type: "text" as const, text: "No code checkpoints yet." }], details: { checkpoints: [] } };
+      if (params.action === "list") {
+        return { content: [{ type: "text" as const, text: all.map((item, index) => display(item, index, context)).join("\n") }], details: { checkpoints: all.map((item) => item.data) } };
+      }
+      const target = params.target && /^\d+$/.test(params.target)
+        ? all[Number(params.target) - 1]
+        : all.find((item) => item.data.id === params.target);
+      if (!target) return { content: [{ type: "text" as const, text: `Checkpoint ${params.target ?? "(missing)"} not found. Use action=list.` }], details: {}, isError: true };
+      if (!context.hasUI) return { content: [{ type: "text" as const, text: "Restoring a checkpoint needs the interactive UI for confirmation." }], details: {}, isError: true };
+      if (!await context.ui.confirm("Restore code checkpoint?", `${display(target, all.indexOf(target), context)}\nRestore ${target.data.files.length} file(s)?`)) {
+        return { content: [{ type: "text" as const, text: "Restore cancelled by the user." }], details: {} };
+      }
+      const result = await restoreTo(context, target, all, (type, data) => pi.appendEntry(type, data));
+      return {
+        content: [{ type: "text" as const, text: `Checkpoint restored: ${result.restored} restored, ${result.deleted} deleted, ${result.skipped} skipped.` }],
+        details: { ...result, checkpoint: target.data },
+      };
+    },
   });
 
   pi.registerCommand("checkpoint", {

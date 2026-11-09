@@ -17,10 +17,11 @@ async function withCheckpointDir(fn) {
   }
 }
 function harness() {
-  const handlers = new Map(), commands = new Map(), entries = [];
+  const handlers = new Map(), commands = new Map(), tools = new Map(), entries = [];
   const pi = {
     on(name, fn) { handlers.set(name, fn); },
     registerCommand(name, command) { commands.set(name, command); },
+    registerTool(tool) { tools.set(tool.name, tool); },
     appendEntry(customType, data) { entries.push({ type: "custom", customType, data, id: `e${entries.length + 1}` }); },
   };
   plugin.default(pi);
@@ -40,7 +41,7 @@ function harness() {
     },
     async navigateTree() { return { cancelled: false }; },
   };
-  return { pi, handlers, commands, entries, notices, ctx };
+  return { pi, handlers, commands, tools, entries, notices, ctx };
 }
 
 test("checkpoint store compresses blobs and restores contents", async () => {
@@ -97,5 +98,26 @@ test("a newly created file is deleted on restore, and rejected propose_change is
     assert.equal(h.entries.length, 1, "rejected proposal adds no checkpoint");
     await h.commands.get("checkpoint").handler("restore 1", h.ctx);
     await assert.rejects(readFile(file, "utf8"), /ENOENT/);
+  });
+});
+
+test("the checkpoint tool lists snapshots and restores only after confirmation", async () => {
+  await withCheckpointDir(async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-checkpoint-tool-"));
+    const h = harness(); h.ctx.cwd = dir;
+    const file = join(dir, "a.ts");
+    await writeFile(file, "original\n");
+    await h.handlers.get("turn_start")({ turnIndex: 1 }, h.ctx);
+    await h.handlers.get("tool_call")({ toolCallId: "e1", toolName: "edit", input: { path: file } }, h.ctx);
+    await writeFile(file, "changed\n");
+    await h.handlers.get("tool_result")({ toolCallId: "e1", toolName: "edit", isError: false }, h.ctx);
+    await h.handlers.get("agent_settled")({}, h.ctx);
+    const tool = h.tools.get("checkpoint");
+    const listed = await tool.execute("t", { action: "list" }, undefined, undefined, h.ctx);
+    assert.match(listed.content[0].text, /1\./);
+    assert.equal((await readFile(file, "utf8")), "changed\n");
+    const restored = await tool.execute("t", { action: "restore", target: "1" }, undefined, undefined, h.ctx);
+    assert.match(restored.content[0].text, /1 restored/);
+    assert.equal(await readFile(file, "utf8"), "original\n");
   });
 });
