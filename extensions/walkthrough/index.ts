@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { resolveDiffBase } from "../lib/git-base.js";
 import { diffSignature, rememberTour, type SharedStop } from "../lib/tour-state.js";
 import { hasNvim, nvimRequest } from "../nvim/nvim.js";
 import {
@@ -222,9 +223,11 @@ export default function walkthrough(pi: ExtensionAPI) {
       if (!stops.length) return fail("a walkthrough needs at least one stop; pass the hunks the reader should see.");
       if (stops.length > MAX_STOPS) return fail(`${stops.length} stops is more than a tour; pick at most ${MAX_STOPS}.`);
 
+      let base = params.base;
       let diff: { text: string; label: string };
       try {
-        diff = await gitDiff(ctx.cwd, params.base, params.paths ?? []);
+        base = params.base ?? await resolveDiffBase((args) => run("git", args, { cwd: ctx.cwd, maxBuffer: 4 * 1024 * 1024 }).then((result) => result.stdout));
+        diff = await gitDiff(ctx.cwd, base, params.paths ?? []);
       } catch (error) {
         return fail(error instanceof Error ? error.message : String(error));
       }
@@ -286,7 +289,7 @@ export default function walkthrough(pi: ExtensionAPI) {
       // Remember the tour so `/tour start` can bring the same stops, with these
       // explanations, into the editor instead of planning a different set.
       rememberTour({
-        base: params.base ?? "HEAD",
+        base,
         signature: diffSignature(files.length, tour.additions, tour.deletions),
         stops: sharedStops(tourStops),
       });

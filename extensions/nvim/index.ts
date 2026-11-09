@@ -9,6 +9,7 @@ import { withFileMutationQueue, type ExtensionAPI, type ExtensionCommandContext,
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { completeArgs } from "../lib/complete.js";
+import { resolveDiffBase } from "../lib/git-base.js";
 import { diffSignature, lastTour, type SharedTour } from "../lib/tour-state.js";
 import { nvimRequest, nvimSocket, hasNvim, type NvimResult } from "./nvim.js";
 import { openDiff } from "./diff.js";
@@ -37,26 +38,9 @@ function matches(file: string, paths?: string[]): boolean {
   return paths.some((path) => file === path || file.startsWith(`${path.replace(/\/$/, "")}/`));
 }
 
-/**
- * Pick the base a tour without an explicit one should use.
- *
- * `HEAD` only covers uncommitted work, so a tour of a branch that is already
- * committed found nothing and said "no changes" while the changes were clearly
- * there. When the working tree is clean, fall back to the point where the
- * branch left its upstream (or the local default branch).
- */
+/** Base for a tour that did not name one; see `lib/git-base`. */
 export async function resolveTourBase(cwd: string): Promise<string> {
-  const dirty = async (ref: string) => (await git(cwd, ["diff", "--name-only", ref]).catch(() => "")).trim();
-  if (await dirty("HEAD")) return "HEAD";
-  const untracked = (await git(cwd, ["ls-files", "--others", "--exclude-standard"]).catch(() => "")).trim();
-  if (untracked) return "HEAD";
-  for (const candidate of ["origin/HEAD", "origin/main", "origin/master", "main", "master"]) {
-    try { await git(cwd, ["rev-parse", "--verify", "--quiet", candidate]); } catch { continue; }
-    const mergeBase = (await git(cwd, ["merge-base", candidate, "HEAD"]).catch(() => "")).trim();
-    if (!mergeBase) continue;
-    if (await dirty(mergeBase)) return mergeBase;
-  }
-  return "HEAD";
+  return resolveDiffBase((args) => git(cwd, args));
 }
 
 /**
@@ -139,7 +123,7 @@ async function prepareTour(
 function noChanges(base: string, paths: readonly string[]): string {
   const where = paths.length ? ` in ${paths.join(", ")}` : "";
   const hint = base === "HEAD"
-    ? "Nothing uncommitted. For committed work pass a base: /tour start --base origin/main"
+    ? "Nothing uncommitted, nothing ahead of the default branch and no previous commit to show. Pass a base: /tour start --base origin/main"
     : "Nothing to show for this base.";
   return `No changes against ${base}${where}. ${hint}`;
 }

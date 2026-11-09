@@ -650,3 +650,34 @@ process.exit(1);
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("the default base follows what there is to review", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-core-bases-"));
+  try {
+    git(cwd, "init", "-q", "-b", "main");
+    git(cwd, "config", "user.email", "t@example.com"); git(cwd, "config", "user.name", "T");
+    await writeFile(join(cwd, "a.ts"), "one\n");
+    git(cwd, "add", "."); git(cwd, "commit", "-q", "-m", "init");
+    // A single commit, clean: nothing to compare against at all.
+    assert.equal(await resolveTourBase(cwd), "HEAD");
+
+    // A clean default branch: review the commit that just landed.
+    await writeFile(join(cwd, "a.ts"), "one\ntwo\n");
+    git(cwd, "commit", "-qam", "second");
+    assert.equal(await resolveTourBase(cwd), "HEAD~1");
+
+    // A branch ahead of main wins over the last commit.
+    git(cwd, "switch", "-q", "-c", "feature");
+    await writeFile(join(cwd, "b.ts"), "new\n");
+    git(cwd, "add", "."); git(cwd, "commit", "-q", "-m", "feature");
+    const base = await resolveTourBase(cwd);
+    assert.notEqual(base, "HEAD~1");
+    assert.match(git(cwd, "log", "--oneline", `${base}..HEAD`), /feature/);
+
+    // Uncommitted work always wins.
+    await writeFile(join(cwd, "a.ts"), "one\ntwo\nthree\n");
+    assert.equal(await resolveTourBase(cwd), "HEAD");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

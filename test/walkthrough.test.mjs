@@ -318,3 +318,18 @@ test("/story starts a turn that narrates the change set and hands off to Neovim"
   await commands.get("story").handler("", { ui: { notify() {} } });
   assert.match(messages[1], /the default base \(uncommitted work, or the branch point when the tree is clean\), the whole change set/);
 });
+
+test("without a base the tour shows the last commit when nothing else is left", async () => {
+  const { dir, git } = await repo({ "app.js": "one\n" });
+  try {
+    await writeFile(join(dir, "app.js"), "one\ntwo\n");
+    git("commit", "-qam", "second");
+    const definition = load();
+    const result = await definition.execute("id", { stops: [{ title: "The added line", why: "It is the change", file: "app.js" }] }, undefined, undefined, { cwd: dir });
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /HEAD~1 → working tree/);
+    assert.match(result.content[0].text, /\+1\/−0/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
