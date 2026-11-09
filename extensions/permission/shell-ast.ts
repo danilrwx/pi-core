@@ -95,7 +95,17 @@ export async function classifyShellCommand(source: string, config?: PermissionCo
       }
       if (commandName === "find" && argv.some((arg) => ["-exec", "-execdir", "-ok", "-okdir", "-delete"].includes(arg))) risky("find can execute commands or delete files");
       if (commandName === "xargs") risky("xargs builds argv from external input");
-      if (["sed", "awk", "gawk", "patch"].includes(commandName)) risky("This utility can execute code or modify files");
+      if (commandName === "patch") risky("patch modifies files");
+      if (commandName === "sed") {
+        const inPlace = argv.some((arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place");
+        const script = argv.slice(1).filter((arg) => !arg.startsWith("-")).join(" ");
+        // `sed -n '1,20p'` is read-only; `w`, `e`, or `-i` can write/execute.
+        if (inPlace || /(?:^|[;{}])\s*[we]\b/.test(script)) risky("sed can modify files or execute code");
+      }
+      if (commandName === "awk" || commandName === "gawk") {
+        const script = argv.slice(1).filter((arg) => !arg.startsWith("-")).join(" ");
+        if (/\bsystem\s*\(|\|\s*getline|(?:print|printf)\b[^;]*>/.test(script)) risky("awk can execute code or write files");
+      }
     }
   } finally { tree.delete(); }
   if (answer.dangerous) answer.level = "high";

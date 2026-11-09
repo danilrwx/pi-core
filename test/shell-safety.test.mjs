@@ -52,3 +52,12 @@ test("real bash abort retains output and partial hook exposes it to codemode", a
   assert.match(result.structuredContent.output, /completed-step/);
   assert.match(result.content[0].text, /Partial result: aborted/);
 });
+
+test("read-only sed and awk are not treated as dangerous", async () => {
+  const command = "cd /home/danil/w/pi-core && sed -n '108,140p' extensions/permission/index.ts; rg -n 'LEVEL_INFO' extensions/permission/index.ts | head -20; sed -n '140,165p' extensions/permission/index.ts";
+  assert.equal((await classifyShellCommand(command, {})).dangerous, false);
+  assert.equal((await classifyShellCommand("sed -n '1,5p' file", {})).dangerous, false);
+  assert.equal((await classifyShellCommand("awk '{print $1}' file", {})).dangerous, false);
+  assert.equal((await classifyShellCommand("sed -i 's/a/b/' file", {})).dangerous, true);
+  assert.equal((await classifyShellCommand("awk '{system(\"rm -rf /\")}' file", {})).dangerous, true);
+});

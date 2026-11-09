@@ -22,7 +22,7 @@ export const LEVEL_INFO: Record<PermissionLevel, { label: string; desc: string }
   low: { label: "Low", desc: "File ops only" },
   medium: { label: "Medium", desc: "Dev operations" },
   high: { label: "High", desc: "Full operations" },
-  yolo: { label: "YOLO", desc: "All except really dangerous" },
+  yolo: { label: "YOLO", desc: "" },
   bypassed: { label: "Bypassed", desc: "All checks disabled" },
 };
 

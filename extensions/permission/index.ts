@@ -119,12 +119,12 @@ const LEVEL_COLORS: Record<PermissionLevel, string> = {
 function getStatusText(level: PermissionLevel): string {
   const info = LEVEL_INFO[level];
   const color = LEVEL_COLORS[level];
-  return `${UI_TEXT.statusIcon} ${BOLD}${color}${info.label}${RESET} ${DIM}· ${info.desc}${RESET}`;
+  return `${UI_TEXT.statusIcon} ${BOLD}${color}${info.label}${RESET}${info.desc ? ` ${DIM}· ${info.desc}${RESET}` : ""}`;
 }
 
 function formatLevelSummary(level: PermissionLevel): string {
   const info = LEVEL_INFO[level];
-  return `${info.label} · ${info.desc}`;
+  return info.desc ? `${info.label} · ${info.desc}` : info.label;
 }
 
 function formatModeSummary(mode: PermissionMode): string {
@@ -133,7 +133,8 @@ function formatModeSummary(mode: PermissionMode): string {
 }
 
 function formatChoiceLabel(label: string, desc: string, isCurrent: boolean): string {
-  return isCurrent ? `${label}: ${desc} ✓` : `${label}: ${desc}`;
+  const base = desc ? `${label}: ${desc}` : label;
+  return isCurrent ? `${base} ✓` : base;
 }
 
 function formatCommandPreview(command: string, maxLength = 120): string {
