@@ -42,14 +42,15 @@ function load() {
   let definition;
   const sent = [];
   const renderers = new Map();
+  const emitted = [];
   plugin({
     registerTool(value) { definition = value; },
     sendMessage(message) { sent.push(message); },
     registerMessageRenderer(type, renderer) { renderers.set(type, renderer); },
     registerCommand() {},
-    events: { emit() {}, on() {} },
+    events: { emit(name, payload) { emitted.push({ name, payload }); }, on() {} },
   });
-  return Object.assign(definition, { sent, renderers });
+  return Object.assign(definition, { sent, renderers, emitted });
 }
 
 async function repo(files) {
@@ -357,4 +358,25 @@ test("the chat block is one slide; the stops are flipped in the slider", () => {
   const full = new TourView(tour, theme).render(70).join("\n");
   assert.match(full, /Second/);
   assert.match(full, /second reason/);
+});
+
+test("the slider receives editor-shaped stops, not the chat block's own shape", async () => {
+  const { dir, git } = await repo({ "app.js": "one\ntwo\nthree\n" });
+  try {
+    await writeFile(join(dir, "app.js"), "one\nTWO\nthree\n");
+    const definition = load();
+    await definition.execute("id", { stops: [{ title: "First", why: "reason", file: "app.js", lines: [2, 2] }] }, undefined, undefined, { cwd: dir });
+    const event = definition.emitted.find((entry) => entry.name === "pi-core:tour-ready");
+    assert.ok(event, "the story hands its stops to the slider");
+    const [stop] = event.payload.stops;
+    assert.equal(stop.file, "app.js");
+    assert.equal(stop.from, 2, "the slider needs a real line range");
+    assert.equal(stop.to, 2);
+    assert.deepEqual(stop.added, [2]);
+    assert.deepEqual(stop.deleted, [{ at: 2, lines: [{ old: 2, text: "two" }] }]);
+    assert.match(stop.note, /reason/, "why travels as the annotation");
+    git("checkout", "--", ".");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

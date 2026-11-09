@@ -23,6 +23,8 @@ function fakeContext({ answer = "An answer.", fail = false, cwd = process.cwd() 
   const notifications = [];
   const statuses = [];
   const widgets = [];
+  const terminalListeners = [];
+  const overlays = [];
   const asked = [];
   return {
     cwd,
@@ -40,11 +42,14 @@ function fakeContext({ answer = "An answer.", fail = false, cwd = process.cwd() 
       notify(text, level) { notifications.push([text, level]); },
       setStatus(key, value) { statuses.push([key, value]); },
       setWidget(key, widget) { widgets.push([key, widget]); },
-      onTerminalInput() { return () => {}; },
+      onTerminalInput(listener) { terminalListeners.push(listener); return () => {}; },
+      custom(factory, options) { overlays.push({ factory, options }); return Promise.resolve(); },
     },
     _notifications: notifications,
     _statuses: statuses,
     _widgets: widgets,
+    _terminalListeners: terminalListeners,
+    _overlays: overlays,
     _asked: asked,
   };
 }
@@ -211,4 +216,28 @@ test("the big panel shows the diff, the reason, the thread and the input", async
   panel.handleInput("\r");
   // The bracket that never became a shortcut stays in the field, like typed text.
   assert.deepEqual(asked, ["[why"]);
+});
+
+test("with the panel closed, ]t flips the slide and reopens it", async () => {
+  const { listeners, handlers } = load();
+  const context = fakeContext();
+  for (const handler of handlers.get("session_start") ?? []) await handler({}, context);
+  listeners.get("pi-core:tour-ready")({ base: "HEAD", stops: [STOP(0), STOP(1), STOP(2)] });
+  const input = context._terminalListeners.at(-1);
+  assert.equal(typeof input, "function", "the strip listens for the tour keys");
+
+  // A session start also arms the panel; close it so the keys are ours.
+  for (const handler of handlers.get("agent_end") ?? []) await handler({}, context);
+  assert.equal(context._overlays.length, 1, "the panel opened after the turn");
+
+  input("]");
+  assert.deepEqual(input("t"), { data: "\x7f" }, "the bracket that reached the editor is removed");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(reviewState().index, 1, "the slide moved");
+  assert.equal(context._overlays.length, 2, "the readable panel reopened at the new stop");
+
+  input("[");
+  input("t");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(reviewState().index, 0);
 });

@@ -195,10 +195,43 @@ export default function review(pi: ExtensionAPI): void {
     setReviewActive(Boolean(session));
     if (!session) return;
     renderPanel(ctxRef);
+    openWhenSettled = true;
     ctxRef.ui.notify(`Review ready: ${session.stops.length} stop${session.stops.length === 1 ? "" : "s"} · the panel opens when this turn ends`, "info");
   });
 
-  pi.on("session_start", (_event, ctx) => { ctxRef = ctx; });
+  /**
+   * With the big panel closed, `]t`/`[t` still mean "flip the slide": they move
+   * the slider and reopen the panel, so the readable view follows the keys
+   * instead of only the strip above the editor changing.
+   */
+  let bracket: { key: "]" | "["; at: number } | undefined;
+  pi.on("session_start", (_event, ctx) => {
+    ctxRef = ctx;
+    if (ctx.mode !== "tui") return;
+    ctx.ui.onTerminalInput((data) => {
+      if (!session || overlay) return;
+      if (bracket) {
+        const recent = Date.now() - bracket.at < 500;
+        const key = bracket.key;
+        bracket = undefined;
+        if (recent && data === "t") {
+          if (move(session, key === "]" ? 1 : -1)) {
+            widget(ctx);
+            queueMicrotask(() => { void openOverlay(ctx); });
+          } else {
+            ctx.ui.notify(key === "]" ? "Last stop." : "First stop.", "info");
+          }
+          return { data: "\x7f" };
+        }
+        return;
+      }
+      if (data === "]" || data === "[") {
+        bracket = { key: data, at: Date.now() };
+        const pending = data;
+        setTimeout(() => { if (bracket?.key === pending) bracket = undefined; }, 600).unref();
+      }
+    });
+  });
   pi.on("session_shutdown", (_event, ctx) => {
     session = undefined;
     panel = undefined;
@@ -206,35 +239,6 @@ export default function review(pi: ExtensionAPI): void {
     ctx.ui.setWidget("review", undefined);
     ctx.ui.setStatus("review", undefined);
     ctxRef = undefined;
-  });
-
-  // `]t` / `[t` exactly like Neovim. The bracket is only claimed when a review is
-  // running and `t` follows immediately; otherwise the keystroke is handed back
-  // untouched, so ordinary typing is never swallowed.
-  let bracket: { key: "]" | "["; at: number } | undefined;
-  pi.on("session_start", (_event, ctx) => {
-    if (ctx.mode !== "tui") return;
-    ctx.ui.onTerminalInput((data) => {
-      if (!session) return;
-      if (bracket) {
-        const recent = Date.now() - bracket.at < 500;
-        const key = bracket.key;
-        bracket = undefined;
-        if (recent && data === "t") {
-          if (move(session, key === "]" ? 1 : -1)) widget(ctx);
-          else ctx.ui.notify(key === "]" ? "Last stop." : "First stop.", "info");
-          // Drop the bracket that already reached the editor, and eat the `t`.
-          return { data: key === "]" || key === "[" ? "\x7f" : data };
-        }
-        return;
-      }
-      if (data === "]" || data === "[") {
-        bracket = { key: data, at: Date.now() };
-        // 600 ms give-up: if `t` never comes, the bracket stays in the editor.
-        const pending = data;
-        setTimeout(() => { if (bracket?.key === pending) bracket = undefined; }, 600).unref();
-      }
-    });
   });
 
   /**

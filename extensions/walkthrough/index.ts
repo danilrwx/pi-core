@@ -127,20 +127,34 @@ function sharedStops(stops: readonly TourStop[]): SharedStop[] {
   return stops.flatMap((stop) => stop.hunks.map((hunk) => {
     const added: number[] = [];
     const deleted: SharedStop["deleted"] = [];
+    // A removed line has no number in the new file, so track where it would sit:
+    // `cursor` is the next new-file line while walking the hunk.
+    let cursor = hunk.newStart;
     for (const line of hunk.lines) {
-      if (line.kind === "add" && line.newLine !== undefined) added.push(line.newLine);
-      else if (line.kind === "del") {
-        const at = line.newLine ?? added.at(-1) ?? hunk.newStart;
+      if (line.kind === "add" && line.newLine !== undefined) {
+        added.push(line.newLine);
+        cursor = line.newLine + 1;
+      } else if (line.kind === "context") {
+        cursor = (line.newLine ?? cursor) + 1;
+      } else if (line.kind === "del") {
         const entry = { old: line.oldLine ?? 0, text: line.text };
         const block = deleted.at(-1);
-        if (block && block.at === at) block.lines.push(entry);
-        else deleted.push({ at, lines: [entry] });
+        if (block && block.at === cursor) block.lines.push(entry);
+        else deleted.push({ at: cursor, lines: [entry] });
       }
     }
+    // The stop's own range is the changed lines, not the hunk's context edges:
+    // that is what the slider header shows and what it centres on.
+    const changedLines = [
+      ...added,
+      ...deleted.map((block) => block.at),
+    ];
+    const from = changedLines.length ? Math.min(...changedLines) : hunk.newStart;
+    const to = changedLines.length ? Math.max(...changedLines) : Math.max(hunk.newStart, hunk.newStart + hunk.newCount - 1);
     return {
       file: stop.file,
-      from: hunk.newStart,
-      to: Math.max(hunk.newStart, hunk.newStart + hunk.newCount - 1),
+      from,
+      to,
       title: stop.title,
       why: stop.why,
       // The editor annotation is the explanation itself, note included.
@@ -310,7 +324,7 @@ export default function walkthrough(pi: ExtensionAPI) {
       await annotateInNvim(ctx.cwd, params.annotate !== false, tourStops);
       // Hand the stops to review mode so the slider is ready without a second
       // command: "/story, then work with it".
-      pi.events.emit("pi-core:tour-ready", { base, stops: tour.stops });
+      pi.events.emit("pi-core:tour-ready", { base, stops: sharedStops(tourStops) });
 
       pi.sendMessage<WalkthroughBlock>({
         customType: BLOCK_TYPE,
