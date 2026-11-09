@@ -525,4 +525,3 @@ function yamlEnd(lines: string[], start: number, indent: number): number {
   }
   return end;
 }
-
