@@ -62,6 +62,30 @@ cached input и стоимость на своей модели. Динамич�
 
 ## Дополнительные расширения
 
+### RTK rewrite (`rtk`)
+
+Перед выполнением bash-команды расширение спрашивает `rtk rewrite` и, если
+переписывание безопасно, подменяет команду на компактный эквивалент. Это
+уменьшает токены, которые модель тратит на `git status`, `cargo test`, `rg`,
+`find`, `kubectl`, `docker` и подобные команды.
+
+- Работает только для `bash` и `!`-команд пользователя; вызовы `bash` из
+  `codemode` не переписываются, чтобы скрипт получил именно тот вывод, который
+  запросил.
+- `rtk` должен быть в `PATH` и иметь версию >= 0.23.0; версия проверяется один
+  раз за сессию. Если бинарника нет, всё работает как раньше, а `/rtk status`
+  показывает причину.
+- Не переписываются compound-команды (`&&`, `|`, `;`, redirects), inline-скрипты
+  (`node -e`, `bash -c`, `python -c`, ...), `find` с `-exec`/`-delete`/`-print0`
+  и другими несовместимыми предикатами, а также уже запущенные `rtk ...`.
+- `RTK_DISABLED=1` выключает переписывание для одной команды (или на сессию),
+  `RTK_DISABLE_REWRITE=1` — то же для одной команды; `/rtk on|off|status`
+  управляет сессией. Статус в футере показывается только когда rewrite выключен
+  или RTK недоступен.
+- Это fail-open шим, а не слой прав: permission/AST по-прежнему видит уже
+  переписанную команду. Сжатие произвольного вывода инструментов (output
+  compaction) не включено — им занимается `bash-head-tail` и штатные лимиты pi.
+
 ### Частичный вывод (`partial-output`)
 
 Pi уже сохраняет tail stdout/stderr bash при отмене и timeout. Расширение не
@@ -81,11 +105,12 @@ Pi уже сохраняет tail stdout/stderr bash при отмене и time
 
 Инструмент `index` возвращает компактную карту файла: imports, классы, функции,
 методы, типы и диапазоны строк. Сначала пробует **LSP documentSymbols** и берёт
-точные диапазоны; если язык-сервер недоступен — откатывается на regex-парсер.
-Используется **до** `read`, чтобы читать только нужные куски. Поддерживает
-TS/JS, Python, Go, Rust, Java, Kotlin, Ruby, PHP, Lua, shell; для незнакомого
-языка честно говорит, что символы не распознаны. В выводе видно `lsp` или
-`regex` — источник скелета.
+точные диапазоны; если язык-сервер недоступен, использует **tree-sitter** для
+C, C++, C#, Scala, Zig и Elixir; последний fallback — regex-парсер.
+Используется **до** `read`, чтобы читать только нужные куски. LSP/regex
+покрывают TS/JS, Python, Go, Rust, Java, Kotlin, Ruby, PHP, Lua, shell; для
+незнакомого языка инструмент честно говорит, что символы не распознаны. В
+выводе видно `lsp`, `tree-sitter` или `regex` — источник скелета.
 
 ### Телеметрия кеша (`cache-guard`)
 
@@ -485,7 +510,8 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts",
     "/home/danil/w/pi-core/extensions/checkpoint/index.ts",
     "/home/danil/w/pi-core/extensions/cache-warming/index.ts",
-    "/home/danil/w/pi-core/extensions/cache-guard/index.ts"
+    "/home/danil/w/pi-core/extensions/cache-guard/index.ts",
+    "/home/danil/w/pi-core/extensions/rtk/index.ts"
   ]}
 ```
 
@@ -512,8 +538,8 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail, checkpoint/rewind, cache-warming, cache-guard,
-LSP-точный index, Claude-совместимая память (импорт, Markdown/frontmatter,
+bash-head-tail, checkpoint/rewind, cache-warming, cache-guard, RTK rewrite,
+LSP/tree-sitter index, Claude-совместимая память (импорт, Markdown/frontmatter,
 auto-recall, auto-memory, Jev+локальный кеш) и needs-input уведомления.
 
 ## Что пока не перенесено

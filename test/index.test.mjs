@@ -64,3 +64,34 @@ test("index converts exact LSP DocumentSymbols and preserves nesting", async () 
   ]);
   assert.match(formatSkeleton("/repo/a.ts", result, "/repo"), /· lsp/);
 });
+
+test("index uses tree-sitter for languages without a language server", async () => {
+  const { treeSitterSkeleton } = await jiti.import("../extensions/index/index.ts");
+  const c = await treeSitterSkeleton(`#include <stdio.h>
+struct Point { int x; int y; };
+static int add(int a, int b) { return a + b; }
+`, "/repo/a.c");
+  assert.equal(c.source, "tree-sitter");
+  assert.ok(c.symbols.some((symbol) => symbol.kind === "struct" && symbol.name === "Point"));
+  assert.ok(c.symbols.some((symbol) => symbol.kind === "function" && symbol.name === "add"));
+  assert.match(c.imports[0], /#include/);
+
+  const cs = await treeSitterSkeleton(`using System;
+namespace App { public class Foo { public int Bar(int x) { return x; } public string Name { get; set; } } }
+`, "/repo/a.cs");
+  assert.ok(cs.symbols.some((symbol) => symbol.kind === "class" && symbol.name === "Foo"));
+  assert.ok(cs.symbols.some((symbol) => symbol.kind === "method" && symbol.name === "Bar"));
+
+  const zig = await treeSitterSkeleton(`pub fn add(a: i32, b: i32) i32 { return a + b; }
+const Point = struct { x: i32, y: i32 };
+`, "/repo/a.zig");
+  assert.ok(zig.symbols.some((symbol) => symbol.kind === "function" && symbol.name === "add"));
+  assert.ok(zig.symbols.some((symbol) => symbol.kind === "variable" && symbol.name === "Point"));
+
+  const elixir = await treeSitterSkeleton(`defmodule Foo do
+  def bar(x), do: x + 1
+end
+`, "/repo/a.ex");
+  assert.ok(elixir.symbols.some((symbol) => symbol.kind === "module" && symbol.name === "Foo"));
+  assert.ok(elixir.symbols.some((symbol) => symbol.kind === "function" && symbol.name === "bar"));
+});

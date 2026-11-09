@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { Language, Parser, type Node } from "web-tree-sitter";
 
 export interface SkeletonSymbol { line: number; end: number; indent: number; kind: string; name: string; signature: string }
-export interface Skeleton { language: string; imports: string[]; symbols: SkeletonSymbol[]; lines: number; source?: "lsp" | "regex" }
+export interface Skeleton { language: string; imports: string[]; symbols: SkeletonSymbol[]; lines: number; source?: "lsp" | "tree-sitter" | "regex" }
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_SYMBOLS = 150;
@@ -20,6 +22,8 @@ const LANGUAGES: Record<string, string> = {
   ".c": "c", ".h": "c", ".cc": "c", ".cpp": "cpp", ".hpp": "cpp", ".cs": "csharp",
   ".rb": "ruby", ".php": "php", ".lua": "lua", ".sh": "shell", ".bash": "shell",
   ".vue": "vue", ".svelte": "svelte",
+  ".scala": "scala", ".sc": "scala", ".zig": "zig", ".dart": "dart",
+  ".ex": "elixir", ".exs": "elixir", ".cxx": "cpp", ".hh": "cpp", ".hxx": "cpp",
 };
 
 export function languageOf(file: string): string {
@@ -120,6 +124,171 @@ const LSP_KINDS: Record<number, string> = {
   25: "operator", 26: "type parameter",
 };
 
+
+const TS_GRAMMARS: Record<string, string> = {
+  c: "c", cpp: "cpp", csharp: "c_sharp", scala: "scala", zig: "zig", elixir: "elixir",
+};
+
+const DECLARATIONS: Record<string, Record<string, string>> = {
+  c: {
+    function_definition: "function", struct_specifier: "struct", union_specifier: "union",
+    enum_specifier: "enum", type_definition: "type", preproc_def: "macro",
+  },
+  cpp: {
+    function_definition: "function", class_specifier: "class", struct_specifier: "struct",
+    union_specifier: "union", enum_specifier: "enum", namespace_definition: "namespace",
+    type_definition: "type", alias_declaration: "type",
+  },
+  csharp: {
+    method_declaration: "method", class_declaration: "class", interface_declaration: "interface",
+    struct_declaration: "struct", enum_declaration: "enum", record_declaration: "record",
+    property_declaration: "property", constructor_declaration: "constructor",
+    namespace_declaration: "namespace", delegate_declaration: "delegate", event_declaration: "event",
+  },
+  scala: {
+    function_definition: "function", function_declaration: "function", class_definition: "class",
+    object_definition: "object", trait_definition: "trait", type_definition: "type",
+    enum_definition: "enum",
+  },
+  zig: {
+    function_declaration: "function", variable_declaration: "variable", test_declaration: "test",
+    struct_declaration: "struct", enum_declaration: "enum", union_declaration: "union",
+  },
+  elixir: {},
+};
+
+let tsInit: Promise<void> | undefined;
+const tsParsers = new Map<string, Parser>();
+const tsLanguages = new Map<string, Promise<Language | undefined>>();
+
+function compact(value: string): string {
+  return value.trim().replace(/\s+/g, " ").slice(0, 160);
+}
+
+function firstLine(value: string): string {
+  return compact(value.split(/\r?\n/, 1)[0] ?? "");
+}
+
+function childName(node: Node | null | undefined, language: string): string | undefined {
+  if (!node) return;
+  if (language === "elixir" && node.type === "call") {
+    const head = node.namedChildren[0];
+    const args = node.namedChildren.find((child) => child?.type === "arguments");
+    if (!head || head.type !== "identifier" || !["defmodule", "def", "defp", "defmacro", "defmacrop", "defguard", "defstruct"].includes(head.text)) return;
+    if (!args) return head.text;
+    if (head.text === "defmodule") return compact(args.text);
+    const first = args.namedChildren.find((child) => child?.type === "call" || child?.type === "identifier");
+    return first ? first.text.replace(/\(.*$/s, "").trim() : compact(args.text).split(/[,(]/)[0];
+  }
+  const named = node.childForFieldName("name");
+  if (named?.text.trim()) return compact(named.text);
+  if (node.type === "variable_declaration") {
+    const identifier = node.namedChildren.find((child) => child?.type === "identifier");
+    if (identifier) return compact(identifier.text);
+  }
+  if (language === "c" || language === "cpp") {
+    let declarator = node.childForFieldName("declarator");
+    while (declarator) {
+      if (["identifier", "field_identifier", "operator_name", "type_identifier"].includes(declarator.type)) return compact(declarator.text);
+      const name = declarator.childForFieldName("name");
+      if (name?.text.trim()) return compact(name.text);
+      const inner = declarator.childForFieldName("declarator");
+      if (!inner) break;
+      declarator = inner;
+    }
+    const identifier = node.namedChildren.find((child) => child?.type === "identifier" || child?.type === "field_identifier" || child?.type === "type_identifier");
+    if (identifier) return compact(identifier.text);
+  }
+  return;
+}
+
+function elixirDeclaration(node: Node): string | undefined {
+  if (node.type !== "call") return;
+  const head = node.namedChildren[0];
+  if (!head || head.type !== "identifier") return;
+  if (head.text === "defmodule") return "module";
+  if (["def", "defp", "defmacro", "defmacrop", "defguard"].includes(head.text)) return "function";
+  if (head.text === "defstruct") return "struct";
+  return;
+}
+
+async function loadTsLanguage(grammar: string): Promise<Language | undefined> {
+  const cached = tsLanguages.get(grammar);
+  if (cached) return cached;
+  const pending = (async () => {
+    try {
+      await (tsInit ??= Parser.init());
+      return await Language.load(fileURLToPath(new URL(`../../vendor/tree-sitter-languages/tree-sitter-${grammar}.wasm`, import.meta.url)));
+    } catch { return; }
+  })();
+  tsLanguages.set(grammar, pending);
+  return pending;
+}
+
+async function tsParser(grammar: string): Promise<Parser | undefined> {
+  const cached = tsParsers.get(grammar);
+  if (cached) return cached;
+  const language = await loadTsLanguage(grammar);
+  if (!language) return;
+  const parser = new Parser();
+  parser.setLanguage(language);
+  tsParsers.set(grammar, parser);
+  return parser;
+}
+
+/** Tree-sitter fallback for languages that have no language server in this setup. */
+export async function treeSitterSkeleton(text: string, file: string): Promise<Skeleton | undefined> {
+  const languageName = languageOf(file);
+  const grammar = TS_GRAMMARS[languageName];
+  if (!grammar) return;
+  const parser = await tsParser(grammar);
+  if (!parser) return;
+  let tree;
+  try { tree = parser.parse(text); } catch { return; }
+  if (!tree) return;
+  try {
+    const lines = text.split(/\r?\n/);
+    const declarations = DECLARATIONS[languageName] ?? {};
+    const found: SkeletonSymbol[] = [];
+    const seen = new Set<string>();
+    const walk = (node: Node, depth: number) => {
+      const kind = languageName === "elixir" ? elixirDeclaration(node) : declarations[node.type];
+      let nextDepth = depth;
+      if (kind) {
+        const name = childName(node, languageName);
+        if (name) {
+          const start = node.startPosition;
+          const end = node.endPosition;
+          const line = start.row + 1;
+          const endLine = Math.max(line, Math.min(lines.length, end.row + (end.column > 0 ? 1 : 0)));
+          const key = `${line}:${endLine}:${kind}:${name}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            found.push({
+              line, end: endLine, indent: nextDepth * 2, kind, name,
+              signature: firstLine(node.text),
+            });
+          }
+          nextDepth += 1;
+        }
+      }
+      for (const child of node.namedChildren) if (child) walk(child, nextDepth);
+    };
+    walk(tree.rootNode, 0);
+    if (!found.length) return;
+    found.sort((a, b) => a.line - b.line || a.indent - b.indent);
+    return {
+      language: languageName,
+      imports: importLines(lines, languageName),
+      symbols: found.slice(0, MAX_SYMBOLS * 2),
+      lines: lines.length,
+      source: "tree-sitter",
+    };
+  } finally {
+    tree.delete();
+  }
+}
+
 /** Convert LSP DocumentSymbols (exact ranges) to the same compact shape as the regex fallback. */
 export function fromLspSymbols(symbols: any[], file: string, text: string): Skeleton | undefined {
   if (!symbols.length) return;
@@ -154,7 +323,17 @@ function importLines(lines: string[], language: string): string[] {
       ? [/^\s*import\s+/, /^\s*"(?:[\w./-]+)"\s*$/]
       : language === "rust"
         ? [/^\s*(?:pub\s+)?use\s+/]
-        : [/^\s*import\s+/, /^\s*(?:const|let|var)\s+[\w${}\s,]+\s*=\s*require\(/];
+        : language === "c" || language === "cpp"
+          ? [/^\s*#\s*include\b/]
+          : language === "csharp"
+            ? [/^\s*using\s+[\w.]+\s*;/]
+            : language === "scala"
+              ? [/^\s*import\s+/]
+              : language === "zig"
+                ? [/^\s*const\s+\w+\s*=\s*@import\(/]
+                : language === "elixir"
+                    ? [/^\s*(?:alias|import|require|use)\s+/]
+                    : [/^\s*import\s+/, /^\s*(?:const|let|var)\s+[\w${}\s,]+\s*=\s*require\(/];
   for (let i = 0; i < lines.length && found.length < 25; i++) {
     const line = lines[i];
     if (patterns.some((re) => re.test(line))) found.push(`${i + 1}: ${sig(line)}`);
@@ -217,7 +396,6 @@ export default function skeletonExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "index",
     label: "Index file",
-    readOnly: true,
     description: "Return a compact skeleton of a source file: imports, declarations, methods and line ranges, without file bodies. Uses the language server for exact ranges when available, then falls back to a regex parser. Use it before read to find the ranges worth reading.",
     promptSnippet: "Index a file before reading it to save context",
     promptGuidelines: [
@@ -236,7 +414,9 @@ export default function skeletonExtension(pi: ExtensionAPI) {
         if (data.length > MAX_BYTES) throw new Error(`File is larger than ${MAX_BYTES / 1024 / 1024} MiB; use read with ranges`);
         const text = data.toString("utf8");
         if (text.includes("\0")) throw new Error("Binary file; use read for supported images or a hex tool");
-        let sk = await lspSkeleton(context.cwd, file, text) ?? skeleton(text, file, { maxSymbols: params.max_symbols });
+        let sk = await lspSkeleton(context.cwd, file, text)
+          ?? await treeSitterSkeleton(text, file)
+          ?? skeleton(text, file, { maxSymbols: params.max_symbols });
         if (params.max_symbols) sk = { ...sk, symbols: sk.symbols.slice(0, params.max_symbols) };
         if (params.query?.trim()) {
           const needle = params.query.trim().toLowerCase();

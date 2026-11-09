@@ -22,6 +22,8 @@
     "extensions/prefix/*.ts",
     "extensions/question/*.ts",
     "extensions/todo/*.ts",
-    "extensions/nvim/*.ts"
+    "extensions/nvim/*.ts",
+    "extensions/index/*.ts",
+    "extensions/rtk/*.ts"
   ]
 }
