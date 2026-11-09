@@ -132,6 +132,14 @@ tmux.
 конструкция, ошибки разбора и потенциально опасные wrappers требуют явного
 подтверждения (в headless блокируются, кроме сознательного `bypassed`).
 
+Уровень **`yolo`** авто-подтверждает обычные команды, записи и правки, но
+оставляет prompt/block для «совсем опасных»: `sudo`, `rm -rf`, `dd`, `mkfs`,
+`git push --force`, `git reset --hard`, `git clean -f`, `kubectl delete/drain`,
+`helm uninstall`, `terraform destroy`, `curl … | sh`, публикации пакетов.
+`bypassed` по-прежнему отключает все проверки. YOLO не отключает AST: команды
+из codemode, фоновых jobs и background shell проходят тот же `tool_call` /
+permission gate.
+
 Консервативный разбор может спрашивать подтверждение чаще прежнего. Он не
 доказывает безопасность запускаемых программ или скриптов и не заменяет sandbox.
 WASM-грамматика лежит в `vendor/`, native build/install scripts не нужны.

@@ -1,7 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { Parser, Language, type Node } from "web-tree-sitter";
 import { parse as words } from "shell-quote";
-import { classifyLiteralCommand, LEVEL_INDEX, type Classification, type PermissionConfig } from "./permission-core.js";
+import { classifyLiteralCommand, isYoloDangerous, LEVEL_INDEX, type Classification, type PermissionConfig } from "./permission-core.js";
+export { isYoloDangerous };
 
 const grammar = fileURLToPath(new URL("../../vendor/tree-sitter-bash/tree-sitter-bash.wasm", import.meta.url));
 let parser: Promise<Parser> | undefined;

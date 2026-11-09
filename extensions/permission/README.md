@@ -10,8 +10,14 @@ Layered permission control for pi-coding-agent.
 | **low** | File operations | + `write`/`edit` files |
 | **medium** | Dev operations | + `npm install`, `git commit`, build commands |
 | **high** | Full operations | + `git push`, deployments, scripts |
+| **yolo** | All except really dangerous | auto-approves routine work; dangerous commands still prompt/block |
+| **bypassed** | No checks | everything, including dangerous (use only in a sandbox) |
 
-**Dangerous commands** (always prompt, even at high): `sudo`, `rm -rf`, `chmod 777`, `dd`, `mkfs`
+**Dangerous commands** (always prompt, even at high/YOLO): `sudo`, `rm -rf`,
+`chmod 777`, `dd`, `mkfs`, `git push --force`, `git reset --hard`,
+`git clean -f`, `kubectl delete/drain`, `helm uninstall`, `terraform destroy`,
+`curl … | sh`, package publishes. Add custom patterns via
+`permissionConfig.overrides.dangerous`.
 
 ## Usage
 
@@ -37,7 +43,7 @@ PI_PERMISSION_LEVEL=medium pi -p "install deps and run tests"
 
 | Variable | Values | Description |
 |----------|--------|-------------|
-| `PI_PERMISSION_LEVEL` | `minimal`, `low`, `medium`, `high`, `bypassed` | Set permission level |
+| `PI_PERMISSION_LEVEL` | `minimal`, `low`, `medium`, `high`, `yolo`, `bypassed` | Set permission level |
 
 ## Settings
 

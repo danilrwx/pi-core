@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse } from "shell-quote";
 
-export type PermissionLevel = "minimal" | "low" | "medium" | "high" | "bypassed";
+export type PermissionLevel = "minimal" | "low" | "medium" | "high" | "yolo" | "bypassed";
 export type PermissionMode = "ask" | "block";
 
-export const LEVELS: PermissionLevel[] = ["minimal", "low", "medium", "high", "bypassed"];
+export const LEVELS: PermissionLevel[] = ["minimal", "low", "medium", "high", "yolo", "bypassed"];
 export const PERMISSION_MODES: PermissionMode[] = ["ask", "block"];
 
 export const LEVEL_INDEX: Record<PermissionLevel, number> = {
@@ -13,7 +13,8 @@ export const LEVEL_INDEX: Record<PermissionLevel, number> = {
   low: 1,
   medium: 2,
   high: 3,
-  bypassed: 4,
+  yolo: 4,
+  bypassed: 5,
 };
 
 export const LEVEL_INFO: Record<PermissionLevel, { label: string; desc: string }> = {
@@ -21,6 +22,7 @@ export const LEVEL_INFO: Record<PermissionLevel, { label: string; desc: string }
   low: { label: "Low", desc: "File ops only" },
   medium: { label: "Medium", desc: "Dev operations" },
   high: { label: "High", desc: "Full operations" },
+  yolo: { label: "YOLO", desc: "All except really dangerous" },
   bypassed: { label: "Bypassed", desc: "All checks disabled" },
 };
 
@@ -34,6 +36,7 @@ export const LEVEL_ALLOWED_DESC: Record<PermissionLevel, string> = {
   low: "read-only + file write/edit",
   medium: "dev ops (install packages, build, test, git commit/pull, file operations)",
   high: "full operations except dangerous commands",
+  yolo: "everything except really dangerous commands",
   bypassed: "all operations",
 };
 
@@ -918,6 +921,22 @@ function isMediumLevel(tokens: string[]): boolean {
   return false;
 }
 
+/** YOLO still refuses to auto-approve commands that are catastrophic or deploy-destructive. */
+const YOLO_DANGEROUS_PATTERNS: RegExp[] = [
+  /(?:^|\s)git\s+push\b.*(?:--force|-f\b)/i,
+  /(?:^|\s)git\s+reset\s+--hard\b/i,
+  /(?:^|\s)git\s+clean\b.*-[a-z]*f/i,
+  /(?:^|\s)kubectl\s+(?:delete|drain|cordon|taint)\b/i,
+  /(?:^|\s)helm\s+(?:delete|uninstall)\b/i,
+  /(?:^|\s)terraform\s+destroy\b/i,
+  /(?:^|\s)(?:curl|wget)\b.*\|\s*(?:ba|z|k)?sh\b/i,
+  /(?:^|\s)(?:npm|cargo|gem|poetry)\s+publish\b/i,
+  /(?:^|\s)rm\s+[^\n]*\s\/\s*$/i,
+];
+export function isYoloDangerous(command: string): boolean {
+  return YOLO_DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
+}
+
 function isHighLevel(tokens: string[]): boolean {
   if (tokens.length === 0) return false;
 
@@ -968,12 +987,12 @@ export function classifyLiteralCommand(tokens: string[], raw: string, config?: P
   const effective = config ?? getCachedConfig();
   const intrinsic = classifySegment(tokens);
   const override = checkOverrides(raw, effective.overrides);
-  if (override) return { level: override.level, dangerous: intrinsic.dangerous || override.dangerous };
+  if (override) return { level: override.level, dangerous: intrinsic.dangerous || override.dangerous || isYoloDangerous(raw) };
   if (applyPrefixMappings(raw, effective.prefixMappings) !== raw) {
     const mapped = classifyCommand(raw, effective);
-    return { level: mapped.level, dangerous: intrinsic.dangerous || mapped.dangerous };
+    return { level: mapped.level, dangerous: intrinsic.dangerous || mapped.dangerous || isYoloDangerous(raw) };
   }
-  return intrinsic;
+  return { level: intrinsic.level, dangerous: intrinsic.dangerous || isYoloDangerous(raw) };
 }
 
 export function classifyCommand(command: string, config?: PermissionConfig): Classification {
@@ -1015,5 +1034,5 @@ export function classifyCommand(command: string, config?: PermissionConfig): Cla
     }
   }
 
-  return { level: maxLevel, dangerous };
+  return { level: maxLevel, dangerous: dangerous || isYoloDangerous(normalizedCommand) };
 }

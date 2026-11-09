@@ -90,6 +90,7 @@ const RED = "\x1b[31m";
 const YELLOW = "\x1b[33m";
 const GREEN = "\x1b[32m";
 const CYAN = "\x1b[36m";
+const MAGENTA = "\x1b[35m";
 const DIM = "\x1b[2m";
 
 const UI_TEXT = {
@@ -111,6 +112,7 @@ const LEVEL_COLORS: Record<PermissionLevel, string> = {
   low: YELLOW,
   medium: CYAN,
   high: GREEN,
+  yolo: MAGENTA,
   bypassed: DIM,
 };
 
@@ -420,6 +422,8 @@ export function handleSessionStart(state: PermissionState, ctx: any): void {
     }
     if (state.currentLevel === "bypassed") {
       ctx.ui.notify("⚠️ Permission bypassed - all checks disabled!", "warning");
+    } else if (state.currentLevel === "yolo") {
+      ctx.ui.notify("YOLO: routine actions are auto-approved; dangerous commands still ask.", "warning");
     } else if (!isQuietMode(ctx)) {
       ctx.ui.notify(`Permission: ${formatLevelSummary(state.currentLevel)} (use /permission to change)`, "info");
     }
@@ -437,6 +441,7 @@ export async function handleBashToolCall(
   if (state.currentLevel === "bypassed") return undefined;
 
   const classification = await classifyShellCommand(command);
+  if (state.currentLevel === "yolo" && !classification.dangerous) return undefined;
 
   if (classification.dangerous) {
     if (!hasInteractiveUI(ctx)) {
@@ -522,7 +527,7 @@ export async function handleWriteToolCall(
 ): Promise<{ block: true; reason: string } | undefined> {
   const { state, toolName, filePath, ctx } = opts;
 
-  if (state.currentLevel === "bypassed") return undefined;
+  if (state.currentLevel === "bypassed" || state.currentLevel === "yolo") return undefined;
 
   if (LEVEL_INDEX[state.currentLevel] >= LEVEL_INDEX.low) return undefined;
 
@@ -568,7 +573,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("permission", {
     description: "View or change permission level",
     getArgumentCompletions: (prefix) => completeArgs(prefix, [...LEVELS, "config"], { config: ["show", "reset"] },
-      { minimal: "read-only", low: "file edits", medium: "builds/tests/commits", high: "push/deploy", bypassed: "no checks (dangerous)",
+      { minimal: "read-only", low: "file edits", medium: "builds/tests/commits", high: "push/deploy", yolo: "all except really dangerous", bypassed: "no checks (dangerous)",
         config: "inspect overrides", show: "print permissionConfig", reset: "clear overrides" }),
     handler: (args, ctx) => handlePermissionCommand(state, args, ctx),
   });
