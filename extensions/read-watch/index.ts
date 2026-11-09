@@ -13,7 +13,7 @@ export default function readWatch(pi: ExtensionAPI) {
   const pending = new Set<string>();
   const reads = new Map<string, ObservedFile>();
   const writes = new Map<string, string>();
-  const status = () => context?.ui.setStatus("read-watch", enabled ? `${tracker?.records().length ?? 0} read files watched` : "read watch off");
+  const status = () => context?.ui.setStatus("read-watch", enabled ? undefined : "read-watch off");
   const save = (record: ObservedFile) => pi.appendEntry(ENTRY, record);
   function dispose() {
     epoch++;
