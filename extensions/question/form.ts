@@ -168,7 +168,7 @@ export function createQuestionForm(
     const body: string[] = [];
     const footerHint = (text: string) => body.push(theme.fg("dim", text));
     if (isMulti) {
-      const tabs: string[] = [" "];
+      const tabs: string[] = [];
       for (let index = 0; index < questions.length; index++) {
         const active = index === tab;
         const answered = answers[index] !== undefined;
@@ -177,41 +177,41 @@ export function createQuestionForm(
       }
       const submit = " ✓ Submit ";
       tabs.push(`${tab === questions.length ? theme.bg("selectedBg", theme.fg("text", submit)) : theme.fg("dim", submit)}`);
-      addPrefixed(" ", tabs.join(""));
+      addPrefixed("", tabs.join(""));
       lines.push("");
     }
     if (inputMode && current) {
-      addPrefixed(" ", theme.fg("accent", theme.bold(current.question)));
+      addPrefixed("", theme.fg("accent", theme.bold(current.question)));
       lines.push("");
-      addPrefixed(" ", theme.fg("muted", "Your answer:"));
+      addPrefixed("", theme.fg("muted", "Your answer:"));
       for (const line of editor.render(Math.max(1, renderWidth - 2))) lines.push(` ${line}`);
       const live = dictation?.snapshot();
       if (dictating && live && live.phase !== "idle") {
         const seconds = `${Math.floor(live.elapsed / 60)}:${String(live.elapsed % 60).padStart(2, "0")}`;
         const what = live.muted ? "muted" : live.text.trim() || (live.phase === "transcribing" ? "transcribing…" : "listening…");
         lines.push("");
-        addPrefixed(" ", theme.fg("accent", `🎙 ${seconds} · ${what}`));
+        addPrefixed("", theme.fg("accent", `🎙 ${seconds} · ${what}`));
       }
       if (dictationNotice) {
         lines.push("");
-        addPrefixed(" ", theme.fg("warning", dictationNotice));
+        addPrefixed("", theme.fg("warning", dictationNotice));
       }
       lines.push("");
       const dictateHint = dictation ? " · Alt+M dictate" : "";
-      addPrefixed(" ", theme.fg("dim", `Enter submit · Esc back${dictateHint}`));
+      addPrefixed("", theme.fg("dim", `Enter submit · Esc back${dictateHint}`));
     } else if (tab === questions.length) {
-      addPrefixed(" ", theme.fg("accent", theme.bold("Answers")));
+      addPrefixed("", theme.fg("accent", theme.bold("Answers")));
       lines.push("");
       questions.forEach((entry, index) => {
         const value = answers[index]?.join(", ");
-        addPrefixed(" ", value
+        addPrefixed("", value
           ? `${theme.fg("muted", `${entry.header}: `)}${theme.fg("text", value)}`
           : theme.fg("warning", `${entry.header}: (no answer)`));
       });
       lines.push("");
-      addPrefixed(" ", theme.fg("dim", "Enter submit · Esc dismiss"));
+      addPrefixed("", theme.fg("dim", "Enter submit · Esc dismiss"));
     } else if (current) {
-      addPrefixed(" ", theme.fg("accent", theme.bold(current.question)));
+      addPrefixed("", theme.fg("accent", theme.bold(current.question)));
       lines.push("");
       current.options.forEach((option, index) => {
         const active = index === cursor;
@@ -227,7 +227,7 @@ export function createQuestionForm(
       const hint = current.multiSelect
         ? "↑↓ navigate · Space toggle/edit · Enter confirm · Tab questions · Esc dismiss"
         : isMulti ? "↑↓ navigate · Enter select · Tab questions · Esc dismiss" : "↑↓ navigate · Enter select · Esc dismiss";
-      addPrefixed(" ", theme.fg("dim", hint));
+      addPrefixed("", theme.fg("dim", hint));
     }
     const hintLine = lines.pop() ?? "";
     const framed = frameLines({

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { jiti } from "./host.mjs";
+const { visibleWidth } = await jiti.import("@earendil-works/pi-tui");
 const { normalizeQuestions, answerLines, buildContent } = await jiti.import("../extensions/question/normalize.ts");
 const { createQuestionForm } = await jiti.import("../extensions/question/form.ts");
 const plugin = await jiti.import("../extensions/question/index.ts");
@@ -247,4 +248,19 @@ test("without the voice extension the dialog says so instead of failing", async 
     form.handleInput(KEYS.enter);
   });
   assert.deepEqual(result.answers, [["x"]]);
+});
+
+test("the dialog body sits inside the frame without a second indent", () => {
+  const form = createQuestionForm(tui, theme, normalizeQuestions([
+    { question: "Куда кладём состояние?", header: "Scope", options: [{ label: "В модуль", description: "простое" }] },
+  ]), () => {}, undefined);
+  const lines = form.render(70);
+  assert.ok(lines[0].startsWith("╭─ question · Scope ─"), "titled frame");
+  assert.ok(lines.at(-1).startsWith("╰"), "closed box");
+  for (const line of lines) assert.equal(visibleWidth(line), 70, `line is not 70 wide: ${line}`);
+  // One column of padding comes from the frame; the body must not add its own.
+  const questionLine = lines.find((line) => line.includes("Куда кладём состояние?"));
+  assert.ok(questionLine.startsWith("│ Куда кладём"), `unexpected indent: ${questionLine}`);
+  const optionLine = lines.find((line) => line.includes("1. В модуль"));
+  assert.ok(optionLine.startsWith("│ > 1. В модуль"), `unexpected indent: ${optionLine}`);
 });
