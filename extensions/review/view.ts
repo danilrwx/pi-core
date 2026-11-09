@@ -52,7 +52,7 @@ export class ReviewPanel implements Component {
     } else {
       push(theme.fg("warning", "  no explanation for this stop yet"));
     }
-    push(theme.fg("dim", `  ]t [t move · /review ask <question> · /review submit · ${total === "1" ? "single stop" : "/review stop"}`));
+    push(theme.fg("dim", `  ]t [t move · type a question to discuss this stop · /story submit to finish${total === "1" ? "" : " · /story stop to cancel"}`));
     this.cached = { width, lines };
     return lines;
   }

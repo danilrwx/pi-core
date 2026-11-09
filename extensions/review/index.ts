@@ -2,9 +2,10 @@
  * Review mode: a slider over the change set inside Pi.
  *
  * The agent used to finish a tour with questions of its own; the user wants to
- * drive instead. `/review` puts the stops in a panel above the editor, `]t`/`[t`
- * move between them, a stop can be discussed in its own thread, and nothing
- * reaches the main conversation until `/review submit` writes one digest.
+ * drive instead. `/story` narrates the change set and opens a full-size panel
+ * over the conversation, `]t`/`[t` move between stops, typing talks to the
+ * current stop, and nothing reaches the main conversation until `/story submit`
+ * writes one digest.
  *
  * Threads are side requests on top of the cached main prefix, so discussing ten
  * stops does not rewrite the conversation or throw away the cache.
@@ -14,11 +15,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { completeArgs } from "../lib/complete.js";
 import { resolveDiffBase } from "../lib/git-base.js";
 import { askSide, installMainRequestRecorder, sideQuestion } from "../lib/main-request.js";
+import { setReviewActive } from "../lib/review-state.js";
 import { lastTour, type SharedStop } from "../lib/tour-state.js";
 import {
   acceptedWithoutDiscussion, appendTurn, createSession, currentStop, fallbackSummary, move, thread,
   threadTranscript, type ReviewSession, type ReviewStop,
 } from "./session.js";
+import { parseUnifiedDiff, type FileDiff } from "../walkthrough/diff.js";
+import { ReviewOverlay } from "./overlay.js";
 import { ReviewPanel } from "./view.js";
 
 export interface ReviewCost { side: number }
@@ -26,7 +30,21 @@ export interface ReviewCost { side: number }
 let session: ReviewSession | undefined;
 let cost: ReviewCost = { side: 0 };
 let panel: ReviewPanel | undefined;
+let overlay: ReviewOverlay | undefined;
 let ctxRef: ExtensionContext | undefined;
+/** Parsed diff of the whole change set, so the overlay shows real code. */
+let diffFiles: FileDiff[] = [];
+/** Set by /story: open the big panel once the agent turn that wrote it settles. */
+let openWhenSettled = false;
+
+async function loadDiff(ctx: ExtensionContext, base: string): Promise<void> {
+  try {
+    const text = await runGit(ctx.cwd, ["diff", "--no-color", "--no-ext-diff", "-U3", base]);
+    diffFiles = parseUnifiedDiff(text);
+  } catch {
+    diffFiles = [];
+  }
+}
 
 /** The stops a fresh review is built from: the walkthrough first, nothing else. */
 function stopsFromWalkthrough(): { stops: ReviewStop[]; base: string } | undefined {
@@ -86,9 +104,9 @@ export default function review(pi: ExtensionAPI): void {
   }
 
   async function ask(ctx: ExtensionContext, question: string): Promise<void> {
-    if (!session) { ctx.ui.notify("No review is running; /review start first.", "info"); return; }
+    if (!session) { ctx.ui.notify("No review is running; /story starts one.", "info"); return; }
     const text = question.trim();
-    if (!text) { ctx.ui.notify("Usage: /review ask <question>", "info"); return; }
+    if (!text) return;
     const index = session.index;
     const stop = session.stops[index];
     appendTurn(session, { role: "user", text });
@@ -109,6 +127,7 @@ export default function review(pi: ExtensionAPI): void {
       cost = { side: cost.side + answer.cost };
       appendTurn(session, { role: "assistant", text: answer.text.trim() || "(no answer)" });
       widget(ctx);
+      overlay?.update();
       // The thread lives in the panel; the transcript stays untouched until submit.
       ctx.ui.notify(`Stop ${index + 1}/${session.stops.length}: ${shorten(answer.text)}`, "info");
     } catch (error) {
@@ -116,6 +135,7 @@ export default function review(pi: ExtensionAPI): void {
       appendTurn(session, { role: "assistant", text: `(failed: ${message})` });
       ctx.ui.notify(`Review question failed: ${message}`, "error");
       widget(ctx);
+      overlay?.update();
     } finally {
       clearTimeout(deadline);
       status();
@@ -157,8 +177,10 @@ export default function review(pi: ExtensionAPI): void {
     // in the context from now on, and the threads themselves are not.
     pi.sendMessage({ customType: "pi-core:review", display: true, content: `${header}\n\n${digest || fallbackSummary(current)}` });
     session = undefined;
+    setReviewActive(false);
     cost = { side: 0 };
     panel = undefined;
+    diffFiles = [];
     ctx.ui.setWidget("review", undefined);
     ctx.ui.setStatus("review", undefined);
     ctx.ui.notify("Review submitted into the conversation.", "info");
@@ -169,9 +191,10 @@ export default function review(pi: ExtensionAPI): void {
     if (!ctxRef || !data?.stops?.length) return;
     session = createSession(data.stops.map((stop) => ({ ...stop })), data.base ?? "HEAD");
     cost = { side: 0 };
+    setReviewActive(Boolean(session));
     if (!session) return;
     renderPanel(ctxRef);
-    ctxRef.ui.notify(`Review ready: ${session.stops.length} stop${session.stops.length === 1 ? "" : "s"} · ]t/[t move · /review ask <question> · /review submit`, "info");
+    ctxRef.ui.notify(`Review ready: ${session.stops.length} stop${session.stops.length === 1 ? "" : "s"} · the panel opens when this turn ends`, "info");
   });
 
   pi.on("session_start", (_event, ctx) => { ctxRef = ctx; });
@@ -213,79 +236,72 @@ export default function review(pi: ExtensionAPI): void {
     });
   });
 
-  pi.registerCommand("review", {
-    description: "Review the change set in Pi: /review start [--base <ref>] | next | prev | ask <question> | thread | submit | stop | status",
-    getArgumentCompletions: (prefix) => completeArgs(prefix,
-      ["start", "next", "prev", "ask", "thread", "submit", "stop", "status"],
-      { start: ["--base", "--fresh"] },
-      { start: "open the slider over the stop list", next: "]t — next stop", prev: "[t — previous stop",
-        ask: "discuss the current stop in its own thread", thread: "show the thread of the current stop",
-        submit: "write one digest into the main conversation", stop: "drop the review without submitting",
-        status: "where the slider is" }),
-    handler: async (args, ctx) => {
-      ctxRef = ctx;
-      if (ctx.mode !== "tui") { ctx.ui.notify("Review needs the interactive terminal.", "warning"); return; }
-      const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
-      const text = rest.join(" ");
+  /**
+   * Typing while a review is open talks to the current stop, not to the main
+   * conversation: that is what "start working with it" means, and it needs no
+   * command. The answer lands in the panel, so the transcript stays untouched.
+   */
+  pi.on("input", async (event, ctx) => {
+    if (!session || ctx.mode !== "tui") return { action: "continue" as const };
+    const text = event.text.trim();
+    if (!text) return { action: "continue" as const };
+    void ask(ctx, text);
+    return { action: "handled" as const };
+  });
 
-      if (action === "start") {
-        let base: string | undefined;
-        const tokens: string[] = [];
-        for (let index = 0; index < rest.length; index++) {
-          const token = rest[index];
-          if (token === "--base" || token === "-b") { base = rest[++index]; continue; }
-          if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
-          tokens.push(token);
-        }
-        const reusable = stopsFromWalkthrough();
-        const resolved = base ?? reusable?.base ?? await resolveDiffBase((argv) => runGit(ctx.cwd, argv));
-        const stops = reusable && (!base || base === reusable.base)
-          ? reusable.stops
-          : [];
-        if (!stops.length) {
-          ctx.ui.notify("No walkthrough to review yet: run /story first, then /review start.", "info");
-          return;
-        }
-        session = createSession(stops, resolved);
-        cost = { side: 0 };
-        if (!session) { ctx.ui.notify("No stops to review.", "info"); return; }
-        renderPanel(ctx);
-        ctx.ui.notify(`Review: ${session.stops.length} stop${session.stops.length === 1 ? "" : "s"} against ${resolved} · ]t/[t move · /review ask <question> · /review submit`, "info");
-        return;
-      }
+  async function openOverlay(ctx: ExtensionContext): Promise<void> {
+    if (!session || ctx.mode !== "tui") return;
+    await loadDiff(ctx, session.base);
+    await ctx.ui.custom<void>(
+      (tui, theme, _keybindings, done) => {
+        overlay = new ReviewOverlay(tui, theme, {
+          session: session!,
+          files: diffFiles,
+          sideCost: () => cost.side,
+          ask: (question) => { void ask(ctx, question); },
+          submit: () => { done(); void submit(ctx); },
+          close: () => done(),
+        });
+        return overlay;
+      },
+      { overlay: true, overlayOptions: { width: "92%", maxHeight: "88%", minWidth: 60, anchor: "center", margin: 1 } },
+    );
+    overlay = undefined;
+    if (session) renderPanel(ctx);
+  }
 
-      if (action === "stop") {
-        session = undefined;
-        cost = { side: 0 };
-        panel = undefined;
-        ctx.ui.setWidget("review", undefined);
-        ctx.ui.setStatus("review", undefined);
-        ctx.ui.notify("Review closed without submitting.", "info");
-        return;
-      }
+  // The story turn must finish before a blocking panel opens, otherwise the tool
+  // that produced the tour would wait for the user to close the review.
+  pi.on("agent_end", async (_event, ctx) => {
+    if (!openWhenSettled) return;
+    openWhenSettled = false;
+    await openOverlay(ctx);
+  });
 
-      if (!session) { ctx.ui.notify(action === "status" ? "No review is running." : "No review is running; /review start first.", "info"); return; }
-
-      if (action === "next" || action === "prev") {
-        if (move(session, action === "next" ? 1 : -1)) { widget(ctx); return; }
-        ctx.ui.notify(action === "next" ? "Last stop." : "First stop.", "info");
-        return;
-      }
-      if (action === "ask") { await ask(ctx, text); return; }
-      if (action === "thread") {
-        const turns = thread(session);
-        if (!turns.length) { ctx.ui.notify("No discussion for this stop yet; /review ask <question>.", "info"); return; }
-        ctx.ui.notify(turns.map((turn) => `${turn.role === "user" ? "Q" : "A"}: ${turn.text}`).join("\n\n"), "info");
-        return;
-      }
-      if (action === "submit") { await submit(ctx); return; }
-      if (action === "status") {
-        const stop = currentStop(session)!;
-        ctx.ui.notify(`Review ${session.index + 1}/${session.stops.length} · ${stop.file}:${stop.from}-${stop.to} · ${thread(session).length} thread turn(s) · side cost $${cost.side.toFixed(4)}`, "info");
-        return;
-      }
-      ctx.ui.notify("Usage: /review start|next|prev|ask <question>|thread|submit|stop|status", "info");
-    },
+  pi.events.on("pi-core:story-control", (payload: unknown) => {
+    const data = payload as { action?: string; text?: string } | undefined;
+    if (!ctxRef || !data?.action) return;
+    const ctx = ctxRef;
+    if (data.action === "open") { void openOverlay(ctx); return; }
+    if (data.action === "submit") { void submit(ctx); return; }
+    if (data.action === "stop") {
+      session = undefined;
+      setReviewActive(false);
+      cost = { side: 0 };
+      panel = undefined;
+      diffFiles = [];
+      ctx.ui.setWidget("review", undefined);
+      ctx.ui.setStatus("review", undefined);
+      ctx.ui.notify("Review closed without submitting.", "info");
+      return;
+    }
+    if (data.action === "status") {
+      if (!session) { ctx.ui.notify("No review is running.", "info"); return; }
+      const stop = currentStop(session)!;
+      ctx.ui.notify(`Review ${session.index + 1}/${session.stops.length} · ${stop.file}:${stop.from}-${stop.to} · ${thread(session).length} thread turn(s) · side cost $${cost.side.toFixed(4)}`, "info");
+      return;
+    }
+    if (data.action === "ask" && data.text) { void ask(ctx, data.text); return; }
   });
 }
 

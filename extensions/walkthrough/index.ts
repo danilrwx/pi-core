@@ -12,7 +12,9 @@ import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { completeArgs } from "../lib/complete.js";
 import { resolveDiffBase } from "../lib/git-base.js";
+import { reviewActive } from "../lib/review-state.js";
 import { diffSignature, rememberTour, type SharedStop } from "../lib/tour-state.js";
 import { hasNvim, nvimRequest } from "../nvim/nvim.js";
 import {
@@ -171,12 +173,17 @@ export default function walkthrough(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("story", {
-    description: "Narrate the change set in the chat, then continue in Neovim: /story [--base <ref>] [paths]",
-    getArgumentCompletions: (prefix) => (prefix.startsWith("-")
-      ? [{ label: "--base", value: "--base ", description: "Compare against this revision (default: uncommitted work, else the branch point)" }]
-      : null),
+    description: "Narrate the change set and start reviewing it: /story [--base <ref>] [paths] | submit | stop | status",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, ["submit", "stop", "status"],
+      {},
+      { submit: "write one digest into the conversation and finish", stop: "cancel the review", status: "where the slider is" }),
     handler: async (args, context) => {
       const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const action = tokens[0] ?? "";
+      if (["submit", "stop", "status"].includes(action)) {
+        pi.events.emit("pi-core:story-control", { action });
+        return;
+      }
       let base: string | undefined;
       const paths: string[] = [];
       for (let index = 0; index < tokens.length; index++) {
@@ -185,17 +192,21 @@ export default function walkthrough(pi: ExtensionAPI) {
         if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
         paths.push(token);
       }
+      if (!base && !paths.length && reviewActive()) {
+        // One command: /story re-opens the running review instead of starting
+        // another narration turn.
+        pi.events.emit("pi-core:story-control", { action: "open" });
+        return;
+      }
       const scope = [
-        base ? `base ${base}` : "the default base (uncommitted work, or the branch point when the tree is clean)",
+        base ? `base ${base}` : "the default base (uncommitted work, the branch point, or the last commit)",
         paths.length ? `limited to ${paths.join(", ")}` : "the whole change set",
       ].join(", ");
       pi.sendUserMessage([
         `Present a walkthrough of the current change set (${scope}).`,
         "",
-        "1. Call the `walkthrough` tool with 3-6 stops that carry the story: the decision, the tricky part, the risk. Skip formatting, renames and generated files. Write `why` as the reasoning a reviewer cannot read off the code, not as a description of the lines.",
-        "2. Stop there. Do not ask me questions of your own and do not propose options: the review slider opens on these stops, I walk them with `]t`/`[t` and ask when I want.",
-        "",
-        "The stops are remembered, so `/tour start` opens the same hunks with the same explanations in Neovim. Keep the stop order meaningful for that.",
+        "1. Call the `walkthrough` tool with 3-6 stops that carry the story: the decision, the tricky part, the risk. Skip formatting, renames and generated files. Write `why` as the reasoning a reviewer cannot read off the code.",
+        "2. Stop there. Do not ask me questions, do not propose options and do not mention other commands: the review panel opens on these stops by itself, I walk them with ]t/[t, type my questions straight into the conversation and run /story submit when I am done.",
       ].join("\n"));
       context.ui.notify(`Walking through ${scope}.`, "info");
     },

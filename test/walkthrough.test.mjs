@@ -312,14 +312,14 @@ test("/story starts a turn that narrates the change set and hands off to Neovim"
   assert.equal(messages.length, 1);
   assert.match(messages[0], /base origin\/main, limited to extensions\//);
   assert.match(messages[0], /Call the `walkthrough` tool with 3-6 stops/);
-  assert.match(messages[0], /Stop there\. Do not ask me questions of your own/);
+  assert.match(messages[0], /Stop there\. Do not ask me questions, do not propose options/);
   assert.doesNotMatch(messages[0], /`question` tool/);
-  assert.match(messages[0], /`\/tour start` opens the same hunks/);
-  assert.match(messages[0], /the review slider opens on these stops/);
+  assert.match(messages[0], /the review panel opens on these stops by itself/);
+
   assert.deepEqual(notified, ["Walking through base origin/main, limited to extensions/."]);
 
   await commands.get("story").handler("", { ui: { notify() {} } });
-  assert.match(messages[1], /the default base \(uncommitted work, or the branch point when the tree is clean\), the whole change set/);
+  assert.match(messages[1], /the default base \(uncommitted work, the branch point, or the last commit\), the whole change set/);
 });
 
 test("without a base the tour shows the last commit when nothing else is left", async () => {
