@@ -9,8 +9,8 @@ carry notices. Keep this record, license files and regression tests when editing
 | [GhabiX/pi-background-job](https://github.com/GhabiX/pi-background-job) | `08389a029beb721429db80bf2f58b44396aebc11` | `extensions/background-jobs/{core,events,index}.ts`, `test/background-job*.test.mjs` | Copyright 2026 GhabiX, [Apache-2.0](licenses/Apache-2.0-GhabiX.txt) |
 | [GhabiX/pi-btw-cached](https://github.com/GhabiX/pi-btw-cached) | `c7d9867b6d2f5efe69de69264f04b9cdfae0b55a` | `extensions/btw/index.ts`, `test/btw-host.test.mjs` | Copyright 2026 GhabiX, [Apache-2.0](licenses/Apache-2.0-GhabiX.txt) |
 | [1jehuang/jcode](https://github.com/1jehuang/jcode) | `2df610a7d821515a843996621cb890673b139e30` | `extensions/image-preview/kitty.ts` (diacritic table and tmux/Kitty envelope adapted) | Copyright 2025 Jeremy Huang, [MIT](licenses/MIT-jcode.txt) |
-| [@bacnh85/pi-rtk](https://github.com/bacnh85/pi-extensions/tree/main/pi-rtk) | `90930b50f5fc0a4491a748ee1692db40f7ec358a` | `extensions/rtk/rewrite.ts` (safe-rewrite and find-predicate checks adapted) | MIT, copyright bacnh85 |
-| [pi-rtk-rewrite](https://github.com/viartemev/pi-rtk-rewrite) | `59c891163b6ea70c97da8b21024c79a6df690f89` | `extensions/rtk/index.ts` (tool_call rewrite flow informed) | MIT, copyright viartemev |
+| [@bacnh85/pi-rtk](https://github.com/bacnh85/pi-extensions/tree/main/pi-rtk) | `90930b50f5fc0a4491a748ee1692db40f7ec358a` | `extensions/rtk/rewrite.ts` (safe-rewrite and find-predicate checks adapted) | [MIT](licenses/MIT-pi-rtk.txt), copyright bacnh85 |
+| [pi-rtk-rewrite](https://github.com/viartemev/pi-rtk-rewrite) | `59c891163b6ea70c97da8b21024c79a6df690f89` | `extensions/rtk/index.ts` (tool_call rewrite flow informed) | [MIT](licenses/MIT-pi-rtk.txt), copyright viartemev |
 | [tree-sitter-wasms](https://github.com/Gregoor/tree-sitter-wasms) | `3e88dc9e36b4e8bf752ce53bea61e4b67282a2bb` | `vendor/tree-sitter-languages/*.wasm` (prebuilt language grammars) | Package Unlicense; grammar licenses in `vendor/tree-sitter-languages/LICENSE-*.txt` |
 
 Local changes:
