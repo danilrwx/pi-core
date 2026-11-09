@@ -164,3 +164,54 @@ vim.cmd("qa!")
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a new file is annotated, not painted, and an unexplained stop says so", { skip: !hasNvim && "nvim is not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-newfile-"));
+  try {
+    const file = join(dir, "ports.yaml");
+    writeFileSync(file, ["a: 1", "b: 2", "c: 3"].join("\n") + "\n");
+    const script = join(dir, "check.lua");
+    const result = join(dir, "result.txt");
+    writeFileSync(script, `
+local bridge = dofile(${JSON.stringify(BRIDGE)})
+vim.cmd("edit ${file}")
+local out = {}
+local function run(request, tag)
+  bridge.request(request)
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, { details = true })) do
+    local d = mark[4]
+    if d.virt_lines then
+      local text = {}
+      for _, vl in ipairs(d.virt_lines) do
+        local parts = {}
+        for _, chunk in ipairs(vl) do parts[#parts + 1] = chunk[1] end
+        text[#text + 1] = table.concat(parts)
+      end
+      out[#out + 1] = tag .. " virt " .. table.concat(text, " / ")
+    elseif d.line_hl_group then
+      out[#out + 1] = tag .. " hl " .. mark[2] .. " " .. d.line_hl_group
+    end
+  end
+end
+run({ method = "show", file = "${file}", root = "${dir}", from_line = 1, to_line = 3, mode = "diff",
+      added = { 1, 2, 3 }, deleted_blocks = {}, index = 6, total = 10, new_file = true }, "new")
+run({ method = "show", file = "${file}", root = "${dir}", from_line = 1, to_line = 3, mode = "diff",
+      added = { 2 }, deleted_blocks = {}, index = 7, total = 10 }, "plain")
+vim.fn.writefile(out, "${result}")
+vim.cmd("qa!")
+`);
+    execFileSync("nvim", ["--headless", "-u", "NONE", "-c", `luafile ${script}`], { stdio: "ignore" });
+    const lines = readFileSync(result, "utf8").trim().split("\n");
+    // A new file: annotation only, no green wall over the code.
+    assert.deepEqual(lines.filter((line) => line.startsWith("new ")), [
+      "new virt ▸ 6/10 · +3 · new file /   no explanation yet — ask pi to explain this stop",
+    ]);
+    // A normal stop without a note highlights its line but does not pretend to explain.
+    assert.deepEqual(lines.filter((line) => line.startsWith("plain ")), [
+      "plain virt ▸ 7/10 · +1 /   no explanation yet — ask pi to explain this stop",
+      "plain hl 1 DiffAdd",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

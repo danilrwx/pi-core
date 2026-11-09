@@ -280,6 +280,7 @@ function M.show_stop(stop, index)
     method = "show", file = stop.file, from_line = stop.expandedFrom, to_line = stop.expandedTo,
     root = M.tour and M.tour.root or nil, mode = "diff", added = stop.added, deleted_blocks = stop.deleted,
     note = stop.note, index = position, total = M.tour and #M.tour.stops or 0,
+    new_file = stop.kind == "new-file",
   })
 end
 
@@ -586,8 +587,14 @@ local function annotation_lines(request, columns)
   local removed = 0
   for _, block in ipairs(request.deleted_blocks or {}) do removed = removed + #(block.lines or {}) end
   if removed > 0 then head[#head + 1] = ("-%d"):format(removed) end
+  if request.new_file then head[#head + 1] = "new file" end
   local lines = { { { "▸ " .. table.concat(head, " · "), "DiagnosticInfo" } } }
-  for _, line in ipairs(wrap(request.note or "", width - 2)) do
+  local note = request.note or ""
+  if note == "" then
+    -- Highlighting alone answers "where", not "why": say what is missing.
+    lines[#lines + 1] = { { "  no explanation yet — ask pi to explain this stop", "Comment" } }
+  end
+  for _, line in ipairs(wrap(note, width - 2)) do
     lines[#lines + 1] = { { "  " .. line, "Comment" } }
   end
   return lines
@@ -625,7 +632,7 @@ show = function(request)
       virt_lines_above = true,
     })
   end
-  if request.mode == "diff" then
+  if request.mode == "diff" and not request.new_file then
     for _, value in ipairs(request.added or {}) do
       local row = tonumber(value)
       if row and row >= 1 and row <= count then

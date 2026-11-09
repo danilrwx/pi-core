@@ -555,6 +555,7 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
     notified.length = 0;
     await commands.get("tour").handler("start --fresh", context);
     assert.equal(notified.some((text) => /Reused the walkthrough/.test(text)), false);
+    assert.ok(notified.some((text) => /planned without explanations/.test(text)), "a tour without a walkthrough must not pretend to explain");
   } finally {
     if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;

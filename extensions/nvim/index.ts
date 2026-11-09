@@ -676,10 +676,17 @@ export default function nvimTour(pi: ExtensionAPI) {
         const data = { index: 1, total: current.stops.length, base: plan.base, file: where, from: shown.from_line, to: shown.to_line };
         recordTour(context, data);
         if (prepared.reused) context.ui.notify(`Reused the walkthrough: ${current.stops.length} stop${current.stops.length === 1 ? "" : "s"} · ${plan.base}`, "info");
+        else context.ui.notify("Tour planned without explanations. Ask me to explain a stop, or run /story first for the chat version.", "info");
         pi.sendMessage({
           customType: "pi-tour-hint",
           display: false,
-          content: `A Neovim tour is running: stop 1/${data.total} at ${where}:${data.from}-${data.to} (base ${plan.base}). When the user asks about the changes, explain stops one by one; use review_tour action=next to advance and the question tool once about the architecture.`,
+          content: [
+            `A Neovim tour is running: stop 1/${data.total} at ${where}:${data.from}-${data.to} (base ${plan.base}).`,
+            prepared.reused
+              ? "The stops carry the explanations of the walkthrough, so they are already annotated in the editor."
+              : "No explanations were written for these stops yet. When the user asks, explain the current stop and pass the same text as `note` to review_tour so it appears as an annotation in the editor.",
+            'Answering "what should I understand here" with only a location is not enough.',
+          ].join(" "),
         }, { triggerTurn: false, deliverAs: "nextTurn" });
         context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Tour 1/${current.stops.length} · ${where}:${shown.from_line}-${shown.to_line}`, "info");
         return;
