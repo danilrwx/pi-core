@@ -114,10 +114,11 @@ export default function nvimTour(pi: ExtensionAPI) {
     if (!ctx) return;
     if (message?.type === "status") {
       const lsp = Array.isArray(message.lsp) ? message.lsp.filter((name: unknown) => typeof name === "string").slice(0, 3).join(",") : "";
+      const filetype = typeof message.filetype === "string" ? message.filetype.trim().slice(0, 24) : "";
       const errors = Number.isFinite(message.errors) ? message.errors : 0;
       const warnings = Number.isFinite(message.warnings) ? message.warnings : 0;
       const dirty = Number.isFinite(message.dirty) ? message.dirty : 0;
-      const parts = ["NVIM", lsp || "LSP off", `${errors}E ${warnings}W`];
+      const parts = ["NVIM", lsp || `LSP off${filetype ? ` (${filetype})` : ""}`, `${errors}E ${warnings}W`];
       if (dirty) parts.push(`${dirty} dirty`);
       ctx.ui.setStatus("nvim", parts.join(" · "));
       return;

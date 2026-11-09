@@ -110,6 +110,7 @@ local function status_payload()
   return {
     type = "status",
     file = vim.api.nvim_buf_get_name(0),
+    filetype = vim.bo.filetype,
     lsp = lsp,
     errors = errors,
     warnings = warnings,
