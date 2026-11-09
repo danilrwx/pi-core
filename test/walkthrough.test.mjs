@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { jiti } from "./host.mjs";
 
-const { parseUnifiedDiff, selectHunks, findFile, hunkSpan } = await jiti.import("../extensions/walkthrough/diff.ts");
+const { parseUnifiedDiff, selectHunks, findFile, hunkSpan, clipHunk } = await jiti.import("../extensions/walkthrough/diff.ts");
 const { TourView } = await jiti.import("../extensions/walkthrough/render.ts");
 const { default: plugin } = await jiti.import("../extensions/walkthrough/index.ts");
 
@@ -85,6 +85,16 @@ test("selects hunks by index, by line range, and defaults to the first ones", ()
   assert.equal(findFile(parseUnifiedDiff(SAMPLE), "nope.ts"), undefined);
 });
 
+test("a line range clips the hunk to the requested lines plus context", () => {
+  const [app] = parseUnifiedDiff(SAMPLE);
+  const clipped = clipHunk(app.hunks[0], 2, 3, 0);
+  assert.deepEqual(clipped.lines.map((line) => line.text), ["const b = 3;", "const c = 4;"]);
+  assert.equal(clipped.header, app.hunks[0].header);
+  const withContext = clipHunk(app.hunks[0], 1, 1, 1);
+  assert.deepEqual(withContext.lines.map((line) => line.newLine ?? line.oldLine), [1, 2, 2]);
+  assert.equal(clipHunk(app.hunks[0], 900, 999), undefined);
+});
+
 test("renders the tour with diff colors, the reasoning and the header counts", () => {
   const view = new TourView({
     title: "Dictation reaches the dialog",
@@ -111,9 +121,10 @@ test("renders the tour with diff colors, the reasoning and the header counts", (
 });
 
 test("presents a real git diff, picks hunks and reports the summary", async () => {
-  const { dir, git } = await repo({ "app.js": "export const a = 1;\n", "other.txt": "keep\n" });
+  const padding = Array.from({ length: 30 }, (_, index) => `const n${index} = ${index};`).join("\n");
+  const { dir, git } = await repo({ "app.js": `${padding}\n`, "other.txt": "keep\n" });
   try {
-    await writeFile(join(dir, "app.js"), "export const a = 1;\nexport const b = 2;\n");
+    await writeFile(join(dir, "app.js"), padding.replace("const n19 = 19;", "const n19 = 19;\nexport const b = 2;"));
     await writeFile(join(dir, "other.txt"), "changed\n");
     const definition = load();
     const result = await definition.execute("id", {
@@ -125,10 +136,19 @@ test("presents a real git diff, picks hunks and reports the summary", async () =
       ],
     }, undefined, undefined, { cwd: dir });
     assert.equal(result.isError, undefined);
-    assert.match(result.content[0].text, /Walkthrough shown against HEAD → working tree: 2 files, \+2\/−1, 2 stops/);
+    assert.match(result.content[0].text, /Walkthrough shown against HEAD → working tree: 2 files, \+3\/−2, 2 stops/);
     assert.match(result.content[0].text, /1\. New export \(app.js, hunk 1\)/);
     assert.equal(result.details.stops[0].file, "app.js");
     assert.deepEqual(result.details.stops[0].hunks, [1]);
+    const focused = await definition.execute("id", {
+      base: "HEAD",
+      stops: [{ title: "Just b", why: "One line", file: "app.js", lines: [20, 20] }],
+    }, undefined, undefined, { cwd: dir });
+    const focusedHunk = focused.details.tour.stops[0].hunks[0];
+    const wholeHunk = result.details.tour.stops[0].hunks[0];
+    assert.ok(focusedHunk.lines.length < wholeHunk.lines.length, "a line range must show fewer lines than the whole hunk");
+    assert.ok(focusedHunk.lines.some((line) => line.text === "export const b = 2;"));
+
     const screen = result.details.tour && new TourView(result.details.tour, theme).render(70).join("\n");
     assert.match(screen, /\+ export const b = 2;/);
     assert.match(screen, /why {2}The dialog needs ab/);

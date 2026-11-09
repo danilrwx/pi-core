@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import {
-  findFile, parseUnifiedDiff, selectHunks, type FileDiff,
+  clipHunk, findFile, parseUnifiedDiff, selectHunks, type FileDiff,
 } from "./diff.js";
 import { TourView, type Tour, type TourStop } from "./render.js";
 
@@ -38,7 +38,7 @@ const PARAMETERS = Type.Object({
     why: Type.String({ description: "Why this change exists and why it works this way — the reasoning a reviewer needs, not a restatement of the code" }),
     file: Type.Optional(Type.String({ description: "Path as it appears in the diff; omit only when the tour covers a single file" })),
     hunk: Type.Optional(Type.Number({ description: "1-based hunk index within the file" })),
-    lines: Type.Optional(Type.Array(Type.Number(), { description: "Line range [from, to] in the new file, an alternative to hunk" })),
+    lines: Type.Optional(Type.Array(Type.Number(), { description: "Line range [from, to] in the new file: picks the hunk that covers it and shows only those lines with two of context" })),
     note: Type.Optional(Type.String({ description: "Optional caveat, trade-off or follow-up" })),
   }), { description: "Stops of the tour, in reading order; pick the hunks that carry the story" }),
 }, { additionalProperties: false });
@@ -138,6 +138,12 @@ export default function walkthrough(pi: ExtensionAPI) {
           continue;
         }
         const picked = selectHunks(file, stop);
+        if (stop.lines && stop.lines.length >= 2) {
+          const clipped = picked.hunks
+            .map((hunk) => clipHunk(hunk, stop.lines![0], stop.lines![1]))
+            .filter((hunk): hunk is NonNullable<typeof hunk> => hunk !== undefined);
+          if (clipped.length) picked.hunks = clipped;
+        }
         const indexes = picked.hunks.map((hunk) => file.hunks.indexOf(hunk) + 1);
         tourStops.push({
           title: stop.title,

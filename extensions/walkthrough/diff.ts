@@ -136,6 +136,24 @@ export function selectHunks(
   return { hunks: file.hunks.slice(0, maxHunks) };
 }
 
+/**
+ * Keep only the lines around a requested new-file range, with `context` lines of
+ * slack on each side. A stop that names lines wants those lines, not the whole
+ * hunk: a large hunk would otherwise fill the card with unrelated code.
+ */
+export function clipHunk(hunk: Hunk, from: number, to: number, context = 2): Hunk | undefined {
+  const low = Math.min(from, to) - context;
+  const high = Math.max(from, to) + context;
+  const lines: DiffLine[] = [];
+  let lastNew = hunk.newStart;
+  for (const line of hunk.lines) {
+    if (line.newLine !== undefined) lastNew = line.newLine;
+    const reference = line.newLine ?? lastNew;
+    if (reference >= low && reference <= high) lines.push(line);
+  }
+  return lines.length ? { ...hunk, lines } : undefined;
+}
+
 /** Match a path the model wrote against the paths in the diff. */
 export function findFile(files: readonly FileDiff[], wanted: string): FileDiff | undefined {
   const normalized = wanted.replace(/^\.\//, "");
