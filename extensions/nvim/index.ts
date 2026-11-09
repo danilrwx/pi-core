@@ -610,9 +610,9 @@ export default function nvimTour(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("tour", {
-    description: "Review changed code in Neovim: /tour start [--base <ref>] [paths] | overview | next | prev | status | stop",
+    description: "Review changed code in Neovim: /tour start [--base <ref>] [paths] [--plain] | overview | next | prev | status | stop",
     getArgumentCompletions: (prefix) => completeArgs(prefix, ["start", "overview", "next", "prev", "status", "stop", "live"], { live: ["on", "off"] },
-      { start: "walk stops one by one (--base <ref> for committed work)", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
+      { start: "walk stops one by one, explained (--base <ref>, --plain skips narration)", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
     handler: async (args, context) => {
       ctx = context;
       // A command that throws leaves the user with nothing to go on, so every
@@ -634,12 +634,14 @@ export default function nvimTour(pi: ExtensionAPI) {
       // `--base <ref>` picks what to compare against; the rest are paths.
       let base: string | undefined;
       let fresh = false;
+      let plain = false;
       const paths: string[] = [];
       for (let index = 0; index < rest.length; index++) {
         const token = rest[index];
         if (token === "--base" || token === "-b") { base = rest[++index]; continue; }
         if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
         if (token === "--fresh" || token === "-f") { fresh = true; continue; }
+        if (token === "--plain" || token === "--no-explain") { plain = true; continue; }
         if (token === "fresh") { fresh = true; continue; }
         paths.push(token);
       }
@@ -666,6 +668,28 @@ export default function nvimTour(pi: ExtensionAPI) {
           context.ui.notify(noChanges(resolved, paths), "info");
           return;
         }
+        // A tour without explanations is a coloured diff: the reader sees where,
+        // never why. Ask the agent to write the story first; the model finishes by
+        // calling review_tour action=start, which reuses those stops and opens the
+        // annotated tour. `--plain` keeps the instant, narration-free tour.
+        if (!prepared.reused && !plain) {
+          const scope = [
+            `base ${prepared.base}`,
+            paths.length ? `limited to ${paths.join(", ")}` : "the whole change set",
+          ].join(", ");
+          pi.sendUserMessage([
+            `Run the review flow for the current change set (${scope}).`,
+            "",
+            `1. Call the \`walkthrough\` tool with 3-6 stops that carry the story: the decision, the tricky part, the risk. Write \`why\` as the reasoning a reviewer cannot read off the code.`,
+            `2. Then call \`review_tour action=start base=${prepared.base}\`${paths.length ? ` paths=${JSON.stringify(paths)}` : ""} so the same ${prepared.stops.length} stops open in Neovim with those explanations as annotations.`,
+            "3. Ask me ONCE, with the `question` tool, whether the architecture and the direction are right and what to adjust.",
+            "",
+            "The stops are already planned, so do not re-plan them by hand; the walkthrough picks the ones worth explaining.",
+          ].join("\n"));
+          context.ui.notify(`No explanations yet: asked pi to narrate ${prepared.stops.length} stop${prepared.stops.length === 1 ? "" : "s"}, then the tour opens annotated. Use /tour start --plain for a quick unannotated pass.`, "info");
+          return;
+        }
+
         const plan = { stops: prepared.stops, base: prepared.base, truncated: 0 };
         const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: context.sessionManager.getSessionId() };
         await install(context, plan.stops);
@@ -676,7 +700,6 @@ export default function nvimTour(pi: ExtensionAPI) {
         const data = { index: 1, total: current.stops.length, base: plan.base, file: where, from: shown.from_line, to: shown.to_line };
         recordTour(context, data);
         if (prepared.reused) context.ui.notify(`Reused the walkthrough: ${current.stops.length} stop${current.stops.length === 1 ? "" : "s"} · ${plan.base}`, "info");
-        else context.ui.notify("Tour planned without explanations. Ask me to explain a stop, or run /story first for the chat version.", "info");
         pi.sendMessage({
           customType: "pi-tour-hint",
           display: false,

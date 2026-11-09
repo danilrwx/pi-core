@@ -328,13 +328,14 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
   execFileSync("chmod", ["755", bin]);
   const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
   process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-fake-cmd.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
-  const commands = new Map(), entries = [], statuses = [], messages = [], renderers = new Map();
+  const commands = new Map(), entries = [], statuses = [], messages = [], userMessages = [], renderers = new Map();
   nvimTour({
     registerTool() {}, on() {},
     registerCommand(name, command) { commands.set(name, command); },
     registerEntryRenderer(type, renderer) { renderers.set(type, renderer); },
     appendEntry(type, data) { entries.push({ type, data }); },
     sendMessage(message, options) { messages.push({ message, options }); },
+    sendUserMessage(content) { userMessages.push(content); },
   });
   const context = {
     cwd, mode: "tui",
@@ -342,7 +343,7 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
     ui: { notify() {}, setStatus(key, value) { statuses.push([key, value]); } },
   };
   try {
-    await commands.get("tour").handler("start", context);
+    await commands.get("tour").handler("start --plain", context);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].type, "pi-core:tour");
     assert.equal(entries[0].data.index, 1);
@@ -478,14 +479,14 @@ process.stdout.write(JSON.stringify({ ok: true, result: { connected: true, file:
       cwd, mode: "tui", sessionManager: { getSessionId: () => "base-cmd" },
       ui: { notify(text) { notified.push(text); }, setStatus() {} },
     };
-    await commands.get("tour").handler(`start --base ${base}`, context);
+    await commands.get("tour").handler(`start --base ${base} --plain`, context);
     const requests = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     assert.ok(requests.some((request) => request.method === "install"));
     assert.match(notified.at(-1), /Tour 1\//);
 
     // Empty diff against the given base: say what was compared and how to fix it.
     notified.length = 0;
-    await commands.get("tour").handler("start --base HEAD", context);
+    await commands.get("tour").handler("start --base HEAD --plain", context);
     assert.match(notified.at(-1), /No changes against HEAD/);
     assert.match(notified.at(-1), /--base origin\/main/);
   } finally {
@@ -528,7 +529,7 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
 
     const commands = new Map(), notified = [];
     nvimTour({
-      registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {},
+      registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, sendUserMessage() {},
       registerCommand(name, command) { commands.set(name, command); },
     });
     const context = {
@@ -545,17 +546,19 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
 
     // The diff moves: the remembered stops no longer describe the tree.
     await writeFile(join(cwd, "a.ts"), Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join("\n") + "\nchanged-tail\n");
+    const installs = async () => (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((request) => request.method === "install");
+    const before = (await installs()).length;
     notified.length = 0;
     await commands.get("tour").handler("start", context);
-    install = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((request) => request.method === "install").at(-1);
-    assert.ok(install.stops.length > 1, "a stale walkthrough must not pin the tour to old line numbers");
-    assert.equal(install.stops[0].note, undefined);
+    assert.equal((await installs()).length, before, "a stale walkthrough must not be installed with old line numbers");
     assert.equal(notified.some((text) => /Reused the walkthrough/.test(text)), false);
+    assert.ok(notified.some((text) => /asked pi to narrate/.test(text)), "without a usable walkthrough the tour asks for explanations");
 
-    notified.length = 0;
-    await commands.get("tour").handler("start --fresh", context);
-    assert.equal(notified.some((text) => /Reused the walkthrough/.test(text)), false);
-    assert.ok(notified.some((text) => /planned without explanations/.test(text)), "a tour without a walkthrough must not pretend to explain");
+    // --plain keeps the instant tour, planned from the current tree.
+    await commands.get("tour").handler("start --plain", context);
+    install = (await installs()).at(-1);
+    assert.ok(install.stops.length > 1);
+    assert.equal(install.stops[0].note, undefined);
   } finally {
     if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
