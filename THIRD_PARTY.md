@@ -12,6 +12,7 @@ carry notices. Keep this record, license files and regression tests when editing
 | [@bacnh85/pi-rtk](https://github.com/bacnh85/pi-extensions/tree/main/pi-rtk) | `90930b50f5fc0a4491a748ee1692db40f7ec358a` | `extensions/rtk/rewrite.ts` (safe-rewrite and find-predicate checks adapted) | [MIT](licenses/MIT-pi-rtk.txt), copyright bacnh85 |
 | [pi-rtk-rewrite](https://github.com/viartemev/pi-rtk-rewrite) | `59c891163b6ea70c97da8b21024c79a6df690f89` | `extensions/rtk/index.ts` (tool_call rewrite flow informed) | [MIT](licenses/MIT-pi-rtk.txt), copyright viartemev |
 | [tree-sitter-wasms](https://github.com/Gregoor/tree-sitter-wasms) | `3e88dc9e36b4e8bf752ce53bea61e4b67282a2bb` | `vendor/tree-sitter-languages/*.wasm` (prebuilt language grammars) | Package Unlicense; grammar licenses in `vendor/tree-sitter-languages/LICENSE-*.txt` |
+| [deckhouse/virtualization/ai/pi](https://fox.flant.com/deckhouse/virtualization/ai/pi) | `7a66ceb37693d0d971a635b4484d65aca43d5b49` | `extensions/{golangci-lint,handoff,lsp-pi,session-query}`, `skills/session-query/SKILL.md` | Internal source copy; no standalone license file |
 
 Local changes:
 
@@ -21,6 +22,29 @@ Local changes:
 - Own filesystem watcher with atomic-save handling, flood limits and lifecycle cleanup.
 - Side-request abort, deadline and separate usage status, preserving request-prefix design.
 - Portable test loading with the installed Pi SDK and additional regression tests.
+
+## Verification
+
+`third-party.lock.json` is the machine-readable inventory: source commits and
+SHA-256 hashes for every vendored file and license. Check it offline with:
+
+```sh
+npm run third-party:check
+```
+
+Rules:
+
+- **exact files** (WASM, licenses) must hash to the recorded value;
+- **modified files** (`modified: true`) are hashed in their local form; the
+  upstream commit remains their base, so a future update must reintroduce or
+  adapt the local changes deliberately;
+- files under `vendor/` and `licenses/` must all be listed;
+- `npm run third-party:lock` refreshes existing hashes after an intentional
+  update. It never downloads upstream and never adds undeclared files.
+
+There is no automatic upstream updater. Updates are a reviewed change: fetch the
+pinned upstream commit/tarball, update the copy, run the tests, then refresh the
+lock.
 
 ## Bash grammar
 

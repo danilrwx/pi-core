@@ -8,7 +8,9 @@
   "scripts": {
     "test": "node --import jiti/register --test",
     "test:agent-features": "node --test --test-concurrency=1 test/*.test.mjs",
-    "typecheck:agent-features": "tsc --project tsconfig.agent-features.json"
+    "typecheck:agent-features": "tsc --project tsconfig.agent-features.json",
+    "third-party:check": "node scripts/third-party.mjs check",
+    "third-party:lock": "node scripts/third-party.mjs lock"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",

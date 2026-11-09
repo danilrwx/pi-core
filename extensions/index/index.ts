@@ -402,7 +402,7 @@ export default function skeletonExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "index",
     label: "Index file",
-    description: "Return a compact skeleton of a source file: imports, declarations, methods and line ranges, without file bodies. Uses the language server for exact ranges when available, then falls back to a regex parser. Use it before read to find the ranges worth reading.",
+    description: "Return a compact skeleton of a source file: imports, declarations, methods and line ranges, without file bodies. Uses tree-sitter when a grammar is available, then the language server, then a regex parser. Use it before read to find the ranges worth reading.",
     promptSnippet: "Index a file before reading it to save context",
     promptGuidelines: [
       "For an unfamiliar or large source file, call index before read; then read only the relevant line ranges.",
@@ -420,8 +420,8 @@ export default function skeletonExtension(pi: ExtensionAPI) {
         if (data.length > MAX_BYTES) throw new Error(`File is larger than ${MAX_BYTES / 1024 / 1024} MiB; use read with ranges`);
         const text = data.toString("utf8");
         if (text.includes("\0")) throw new Error("Binary file; use read for supported images or a hex tool");
-        let sk = await lspSkeleton(context.cwd, file, text)
-          ?? await treeSitterSkeleton(text, file)
+        let sk = await treeSitterSkeleton(text, file)
+          ?? await lspSkeleton(context.cwd, file, text)
           ?? skeleton(text, file, { maxSymbols: params.max_symbols });
         if (params.max_symbols) sk = { ...sk, symbols: sk.symbols.slice(0, params.max_symbols) };
         if (params.query?.trim()) {

@@ -5,7 +5,7 @@
 **A personal extension suite for [pi](https://github.com/earendil-works/pi) — built for long sessions, small context, and a terminal that stays out of the way.**
 
 ![pi](https://img.shields.io/badge/pi-%E2%89%A5%201.3.0-6f42c1)
-![tests](https://img.shields.io/badge/tests-220%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-223%20passing-brightgreen)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6)
 ![platform](https://img.shields.io/badge/platform-Unix-lightgrey)
 
@@ -88,7 +88,7 @@ Reload pi with `/reload`.
 
 | Extension | What it does |
 |---|---|
-| [`index`](extensions/index) | File skeleton with imports, declarations, methods, and line ranges. LSP `documentSymbols` first, then tree-sitter (C, C++, C#, Scala, Zig, Elixir), then a regex fallback. |
+| [`index`](extensions/index) | File skeleton with imports, declarations, methods, and line ranges. Tree-sitter first where a grammar exists (C, C++, C#, Scala, Zig, Elixir), then LSP `documentSymbols`, then a regex fallback. |
 | [`bash-head-tail`](extensions/bash-head-tail) | When bash output is truncated to a tail, reads the beginning of the full log (80 lines / 12 KiB) and puts it before the tail. |
 | [`partial-output`](extensions/partial-output) | Labels aborted/timed-out bash and codemode output as partial, preserving the streamed text and exit code 130/124. |
 | [`rtk`](extensions/rtk) | Rewrites safe `bash` commands through `rtk rewrite`: `git`, `cargo`, `rg`, `find`, `kubectl`, `docker`, and friends. Fail-open; skips compound commands, inline scripts, and unsafe `find` predicates. |
@@ -261,8 +261,10 @@ pi-core/
 │   └── ...                  one directory per feature
 ├── licenses/                third-party license texts
 ├── nvim/pi-ide.lua          Neovim discovery and bridge server
+├── scripts/third-party.mjs  offline lock verification
 ├── skills/                  local skill definitions
 ├── test/                    Node test runner suites
+├── third-party.lock.json    SHA-256 inventory of vendored files
 ├── vendor/                  pinned WASM grammars
 ├── THIRD_PARTY.md           provenance and upstream commits
 └── package.json
@@ -286,7 +288,7 @@ Typecheck the extension set:
 npm run typecheck:agent-features
 ```
 
-The tests use temporary directories, separate process groups, and local HTTP/WebSocket fakes. They do not call real models, microphones, or paid APIs. The suite covers permission and session state, job cleanup, bounded logs, atomic saves, `/btw` cancellation, codemode, cache warming, AST shell parsing, partial output, read-watch, images, voice, todo, question, Neovim tour/discovery, `index`, memory, notify, checkpoints, batch, RTK, and the local usage collector.
+The tests use temporary directories, separate process groups, and local HTTP/WebSocket fakes. They do not call real models, microphones, or paid APIs. The suite covers permission and session state, job cleanup, bounded logs, atomic saves, `/btw` cancellation, codemode, cache warming, AST shell parsing, partial output, read-watch, images, voice, todo, question, Neovim tour/discovery, `index`, memory, notify, checkpoints, batch, RTK, the local usage collector, and the vendored-file lock.
 
 ---
 
@@ -315,6 +317,18 @@ The tests use temporary directories, separate process groups, and local HTTP/Web
 
 ## Third-party code
 
-Vendored code and WASM grammars are listed in [`THIRD_PARTY.md`](THIRD_PARTY.md), with exact upstream commits and license files in [`licenses/`](licenses). This repository does not include an automatic upstream updater.
+Vendored code and WASM grammars are listed in [`THIRD_PARTY.md`](THIRD_PARTY.md), with exact upstream commits and license files in [`licenses/`](licenses). [`third-party.lock.json`](third-party.lock.json) records the SHA-256 of every vendored file and license.
 
-If you change a vendored file, update its provenance note and keep the relevant regression tests.
+Verify the inventory offline:
+
+```sh
+npm run third-party:check
+```
+
+The check rejects a changed vendored file, a missing license, and any unlisted file under `vendor/` or `licenses/`. After an intentional upstream refresh, update the copied files and run:
+
+```sh
+npm run third-party:lock
+```
+
+`lock` only refreshes hashes for files already declared in the lock; it does not fetch upstream and does not silently add new files. This repository does not include an automatic upstream updater.

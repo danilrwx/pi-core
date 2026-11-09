@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "licenses": {
+    "licenses/Apache-2.0-GhabiX.txt": "8762d5d921e9ea8a9d7d58eac0da56fe1d00396e702f1b44178de55d797a5669",
+    "licenses/MIT-jcode.txt": "720443eee2efeda8f9f93a7a6a6f62763c17171106f60df58a35b8ea638fdf60",
+    "licenses/MIT-pi-rtk.txt": "e82eb4ee10d418bd1333668996fd87d8bc1913febe51a4c11bf2dbbb0c59d4b3",
+    "vendor/tree-sitter-bash/LICENSE": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-cpp.txt": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-c_sharp.txt": "f0869b7078a5c25f32a99c89f4894b7fb14f3eabbe532575bea74fdef839648f",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-c.txt": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-elixir.txt": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-scala.txt": "1f95ed26e1f4074074c9c7083e61c0a9e4c3b9f435745044995f3beb4ed28575",
+    "vendor/tree-sitter-languages/LICENSE-tree-sitter-zig.txt": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727"
+  },
+  "sources": [
+    {
+      "id": "pi-background-job",
+      "kind": "git",
+      "repo": "https://github.com/GhabiX/pi-background-job",
+      "commit": "08389a029beb721429db80bf2f58b44396aebc11",
+      "license": "licenses/Apache-2.0-GhabiX.txt",
+      "files": [
+        {
+          "path": "extensions/background-jobs/core.ts",
+          "sha256": "1d9a6a1c25cab5d20dcd3532ab3d6b293b25cdaa9ba648154c99c1b23dc06fa0",
+          "modified": true
+        },
+        {
+          "path": "extensions/background-jobs/events.ts",
+          "sha256": "050b6e96770808b4c5dc7aa744d6a2cf1d53759ce0d01050ae869ecf9ab62e6d",
+          "modified": true
+        },
+        {
+          "path": "extensions/background-jobs/index.ts",
+          "sha256": "8d238ddcb03aadc461da316b6ad63cc715ee379d7386108656c18f937799c428",
+          "modified": true
+        },
+        {
+          "path": "test/background-job.test.mjs",
+          "sha256": "e35812c61ceced643f6af886ccb143cf519a2f3662f56930f11a0170b45ee086",
+          "modified": true
+        },
+        {
+          "path": "test/background-job-events.test.mjs",
+          "sha256": "b7404ef2807c13217f35788cf544b6c56c50a696a8a635541f8b8dee11eb78b9",
+          "modified": true
+        }
+      ]
+    },
+    {
+      "id": "pi-btw-cached",
+      "kind": "git",
+      "repo": "https://github.com/GhabiX/pi-btw-cached",
+      "commit": "c7d9867b6d2f5efe69de69264f04b9cdfae0b55a",
+      "license": "licenses/Apache-2.0-GhabiX.txt",
+      "files": [
+        {
+          "path": "extensions/btw/index.ts",
+          "sha256": "beeb290bf2a2c25a69f049ab6a3813ef6ffdf8fb05194068554f8e5329a742b2",
+          "modified": true
+        },
+        {
+          "path": "test/btw-host.test.mjs",
+          "sha256": "949abf7e7d8134949939fcb6144a04a9bbb329043e82a1d73805fc080bf9ade8",
+          "modified": true
+        }
+      ]
+    },
+    {
+      "id": "jcode",
+      "kind": "git",
+      "repo": "https://github.com/1jehuang/jcode",
+      "commit": "2df610a7d821515a843996621cb890673b139e30",
+      "license": "licenses/MIT-jcode.txt",
+      "files": [
+        {
+          "path": "extensions/image-preview/kitty.ts",
+          "sha256": "9875c6bc146042ffb3ffb71841558b302a5f4b6c39480d4c288e190d6591f102",
+          "modified": true
+        }
+      ]
+    },
+    {
+      "id": "pi-rtk",
+      "kind": "git",
+      "repo": "https://github.com/bacnh85/pi-extensions/tree/main/pi-rtk",
+      "commit": "90930b50f5fc0a4491a748ee1692db40f7ec358a",
+      "license": "licenses/MIT-pi-rtk.txt",
+      "files": [
+        {
+          "path": "extensions/rtk/rewrite.ts",
+          "sha256": "0ced7ef4d3300d3b922e48b6328869547592ce3b91016b49ef88bee4ea57a016",
+          "modified": true
+        }
+      ]
+    },
+    {
+      "id": "pi-rtk-rewrite",
+      "kind": "git",
+      "repo": "https://github.com/viartemev/pi-rtk-rewrite",
+      "commit": "59c891163b6ea70c97da8b21024c79a6df690f89",
+      "license": "licenses/MIT-pi-rtk.txt",
+      "files": [
+        {
+          "path": "extensions/rtk/index.ts",
+          "sha256": "96dbe6e9994c5860956c3b47f5d33a3ace126247ac6af0e4e95ba567fd28e175",
+          "modified": true
+        }
+      ]
+    },
+    {
+      "id": "tree-sitter-bash",
+      "kind": "npm",
+      "package": "tree-sitter-bash",
+      "version": "0.25.1",
+      "commit": "801326684a26ffc4e749bb016c50c6c30bdfa345",
+      "license": "vendor/tree-sitter-bash/LICENSE",
+      "files": [
+        {
+          "path": "vendor/tree-sitter-bash/tree-sitter-bash.wasm",
+          "sha256": "8292919c88a0f7d3fb31d0cd0253ca5a9531bc1ede82b0537f2c63dd8abe6a7a",
+          "modified": false
+        }
+      ]
+    },
+    {
+      "id": "tree-sitter-wasms",
+      "kind": "npm",
+      "package": "tree-sitter-wasms",
+      "version": "0.1.13",
+      "commit": "3e88dc9e36b4e8bf752ce53bea61e4b67282a2bb",
+      "files": [
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-c.wasm",
+          "sha256": "056b25072382f72deee2c64ec238ffc4bb8cf42844ef21502c0e70f03a8a0d66",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-cpp.wasm",
+          "sha256": "f6afdf53bfd6de76557bb7edb624a3a3869e14d9a83b78433f93617ecee42527",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-c_sharp.wasm",
+          "sha256": "6266a7e32d68a3459104d994dc848df15d5672b0ea8e86d327274b694f8e6991",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-scala.wasm",
+          "sha256": "160cfbb8ff7220886e99ed9699abceb6d837b4cd28993b9282c7f445a0554abd",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-zig.wasm",
+          "sha256": "59cc4531aa661e2de4c5bc04e4045b6bdd5d2bfa75045cbda5f673102d140eef",
+          "modified": false
+        },
+        {
+          "path": "vendor/tree-sitter-languages/tree-sitter-elixir.wasm",
+          "sha256": "82e91b9759ddca30d8978ebbfa8e347b4451b64c931f9ae62112e6db9b8fac20",
+          "modified": false
+        }
+      ]
+    },
+    {
+      "id": "ai-pi",
+      "kind": "git",
+      "repo": "git@fox.flant.com:deckhouse/virtualization/ai/pi.git",
+      "commit": "7a66ceb37693d0d971a635b4484d65aca43d5b49",
+      "files": [
+        {
+          "path": "extensions/golangci-lint/index.ts",
+          "sha256": "5657f96a1d5199638e8fd6c947380aadcf2d24ace52a6237eb2149e788c35e0d",
+          "modified": true
+        },
+        {
+          "path": "extensions/handoff/index.ts",
+          "sha256": "e1a2f4d9adbd5f44254805d1325ad2f8f6a1323c2894a47a6b1ecc38e2de674c",
+          "modified": false
+        },
+        {
+          "path": "extensions/lsp-pi/index.ts",
+          "sha256": "21e1f6dd989cce9759cb629c8e3a6099ed519a834b778d4c1ecc81d5e0756139",
+          "modified": false
+        },
+        {
+          "path": "extensions/lsp-pi/lsp.ts",
+          "sha256": "30211e9e43e5e16fdfbe0863405c6ef58efe140a7a573d1ebaf39b7d01f678e3",
+          "modified": false
+        },
+        {
+          "path": "extensions/lsp-pi/lsp-tool.ts",
+          "sha256": "78fa9a0fe8bf51e06795b849f78db6f60a4c8a9dedfeba22a7e600660df34f74",
+          "modified": false
+        },
+        {
+          "path": "extensions/lsp-pi/lsp-core.ts",
+          "sha256": "7005f84ba4d26d91675d01c7961fa5c3e16bef81f960b84d7eae03afa2a3b74c",
+          "modified": true
+        },
+        {
+          "path": "extensions/session-query/index.ts",
+          "sha256": "ee504076a429971cc386b0c6f7690b099ae343359db873127d786d562970c72e",
+          "modified": false
+        },
+        {
+          "path": "skills/session-query/SKILL.md",
+          "sha256": "1ab509b52d1eb9a65b7467d9867878c135ca7fd4808c95576ed667ead10fc67d",
+          "modified": false
+        }
+      ]
+    }
+  ]
+}
