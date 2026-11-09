@@ -203,6 +203,36 @@ Fingerprints сохраняются custom entries **вне model context** и �
   `propose_change`. Изменения через `bash`, MCP, внешний редактор или другую
   сессию не откатываются. Это не замена git.
 
+### Прогрев prompt cache (`cache-warming`)
+
+`cacheWarming: "idle"` в настройках включает поддержание кеша между ходами.
+Расширение ограничивает его, чтобы не греть кеш круглосуточно:
+
+- только пока с последней активности прошло ≤ 30 минут
+  (`PI_CACHE_WARM_IDLE_MINUTES`);
+- бюджет на одно idle-окно ≤ $0.05 (`PI_CACHE_WARM_IDLE_BUDGET`);
+- только если ожидаемая экономия ≥ $0.005 (`PI_CACHE_WARM_MIN_SAVINGS`);
+- во время активного run решение оставляется pi;
+- после `agent_settled` бюджет и окно начинаются заново; после лимита warming
+  останавливается до следующего реального запроса.
+
+Плюс нужен `promptCache` для модели в `~/.pi/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "deepseek": {
+      "modelOverrides": {
+        "deepseek-flash": { "promptCache": { "short": 300 } }
+      }
+    }
+  }
+}
+```
+
+Без этого pi не считает модель eligible для warming. `/warming status|on|off`
+показывает политику и потраченный бюджет.
+
 ### Диктовка (`voice`)
 
 **Alt+M** / `/voice`: первое нажатие записывает, второе останавливает и
@@ -437,7 +467,8 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/memory/index.ts",
     "/home/danil/w/pi-core/extensions/notify/index.ts",
     "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts",
-    "/home/danil/w/pi-core/extensions/checkpoint/index.ts"
+    "/home/danil/w/pi-core/extensions/checkpoint/index.ts",
+    "/home/danil/w/pi-core/extensions/cache-warming/index.ts"
   ]}
 ```
 
@@ -464,9 +495,9 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail, checkpoint/rewind, LSP-точный index, Claude-совместимая память
-(импорт, Markdown/frontmatter, auto-recall, auto-memory, Jev+локальный кеш) и
-needs-input уведомления.
+bash-head-tail, checkpoint/rewind, cache-warming, LSP-точный index,
+Claude-совместимая память (импорт, Markdown/frontmatter, auto-recall,
+auto-memory, Jev+локальный кеш) и needs-input уведомления.
 
 ## Что пока не перенесено
 
