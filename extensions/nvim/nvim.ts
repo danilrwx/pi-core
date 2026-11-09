@@ -11,11 +11,12 @@ export function nvimSocket(): string | undefined {
   return value?.trim() || undefined;
 }
 
-/** Explicit env socket first, then a live lock file published by nvim/pi-ide.lua. */
+/** Prefer a live lock published by nvim/pi-ide.lua; env is the manual fallback. */
 export function resolveEndpoint(cwd = process.cwd()): IdeEndpoint | undefined {
+  const lock = discoverIde(cwd);
+  if (lock) return lock;
   const socket = nvimSocket();
-  if (socket) return { socket, token: process.env.PI_IDE_TOKEN };
-  return discoverIde(cwd);
+  return socket ? { socket, token: process.env.PI_IDE_TOKEN } : undefined;
 }
 export function hasNvim(cwd = process.cwd()): boolean {
   return Boolean(resolveEndpoint(cwd));
