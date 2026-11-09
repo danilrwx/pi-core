@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { discoverIde, type IdeEndpoint } from "./discovery.js";
 import { fileURLToPath } from "node:url";
 
@@ -11,11 +11,21 @@ export function nvimSocket(): string | undefined {
   return value?.trim() || undefined;
 }
 
-/** Prefer a live lock published by nvim/pi-ide.lua; env is the manual fallback. */
+/**
+ * Endpoint priority: an explicit socket that still exists, then a live lock
+ * published by nvim/pi-ide.lua, then a configured but missing socket (so the
+ * request fails with a clear message instead of silently going elsewhere).
+ *
+ * Env first matters because `ensureNvim` spawns a window and records its socket
+ * there: with discovery first, a second Neovim sitting in the same workspace
+ * won the race and the tour was installed into the wrong one, leaving the
+ * freshly opened window on an empty buffer.
+ */
 export function resolveEndpoint(cwd = process.cwd()): IdeEndpoint | undefined {
+  const socket = nvimSocket();
+  if (socket && existsSync(socket)) return { socket, token: process.env.PI_IDE_TOKEN };
   const lock = discoverIde(cwd);
   if (lock) return lock;
-  const socket = nvimSocket();
   return socket ? { socket, token: process.env.PI_IDE_TOKEN } : undefined;
 }
 export function hasNvim(cwd = process.cwd()): boolean {

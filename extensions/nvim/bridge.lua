@@ -607,7 +607,11 @@ show = function(request)
   last = math.min(last, count)
   if first > count then error("Requested range starts past the end of the file") end
 
-  open_window(buf)
+  -- A user autocmd on buffer switch can raise (a stale tag stack, a plugin that
+  -- expects another context); that must not abort the tour, which is data the
+  -- agent already prepared.
+  local switched, switch_error = pcall(open_window, buf)
+  if not switched then notify(("Pi: could not show %s: %s"):format(file, tostring(switch_error)), vim.log.levels.WARN) end
 
   for _, loaded in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(loaded) then

@@ -136,3 +136,31 @@ vim.cmd("qa!")
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a failing buffer-switch autocmd does not abort the tour", { skip: !hasNvim && "nvim is not installed" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-annot-fail-"));
+  try {
+    const file = join(dir, "a.go");
+    writeFileSync(file, "one\ntwo\nthree\n");
+    const script = join(dir, "check.lua");
+    const result = join(dir, "result.txt");
+    writeFileSync(script, `
+local bridge = dofile(${JSON.stringify(BRIDGE)})
+vim.cmd("edit ${file}")
+-- A config that raises on every buffer switch, like a broken tag stack.
+vim.api.nvim_create_autocmd("BufEnter", { callback = function() error("E73: Tag stack empty") end })
+local ok, value = pcall(bridge.request, {
+  method = "show", file = "${file}", root = "${dir}", from_line = 1, to_line = 3, mode = "diff", added = { 2 },
+})
+local lines = { "ok=" .. tostring(ok), "marks=" .. tostring(#vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, {})) }
+vim.fn.writefile(lines, "${result}")
+vim.cmd("qa!")
+`);
+    execFileSync("nvim", ["--headless", "-u", "NONE", "-c", `luafile ${script}`], { stdio: "ignore" });
+    const lines = readFileSync(result, "utf8").trim().split("\n");
+    assert.equal(lines[0], "ok=true", "the request must succeed despite the autocmd error");
+    assert.ok(Number(lines[1].split("=")[1]) > 0, "the tour marks are still installed");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -586,3 +586,67 @@ test("a failing start reports the reason and keeps it for status", async () => {
   await commands.get("tour").handler("status", context);
   assert.match(notified.at(-1)[0], /No tour is running\. Last error: Unknown base revision "no-such-ref"/);
 });
+
+test("opening Neovim survives a slow handshake and closes the window when it never answers", async () => {
+  const { ensureNvim } = await jiti.import("../extensions/nvim/spawn.ts");
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-spawn-"));
+  const log = join(dir, "tmux.log");
+  const counter = join(dir, "attempts");
+  const tmuxBin = join(dir, "fake-tmux");
+  const nvimBin = join(dir, "fake-nvim");
+  // The fake tmux creates the socket the spawned Neovim would create, and records
+  // the calls so a failed open can be checked for its cleanup.
+  await writeFile(tmuxBin, `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, args.join(" ") + "\\n");
+if (args[0] === "new-window") {
+  const command = args.at(-1);
+  const socket = /--listen '?([^' ]+)/.exec(command)[1];
+  setTimeout(() => fs.writeFileSync(socket, ""), ${"${DELAY}"});
+  process.stdout.write("%99\\n");
+}
+`);
+  await writeFile(nvimBin, `#!${process.execPath}
+const fs = require("node:fs");
+const counter = ${JSON.stringify(counter)};
+const attempts = fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) : 0;
+fs.writeFileSync(counter, String(attempts + 1));
+if (attempts < 2) { process.stdout.write(JSON.stringify({ ok: false, error: "channel closed" }) + "\\n"); process.exit(1); }
+process.stdout.write(JSON.stringify({ ok: true, result: { connected: true } }) + "\\n");
+`);
+  execFileSync("chmod", ["755", tmuxBin, nvimBin]);
+  const previous = { tmux: process.env.TMUX, socket: process.env.PI_NVIM_SOCKET, ide: process.env.PI_IDE_TOKEN, bin: process.env.PI_TOUR_NVIM_BIN, tmuxBin: process.env.PI_TOUR_TMUX_BIN, budget: process.env.PI_NVIM_OPEN_TIMEOUT_MS };
+  delete process.env.PI_NVIM_SOCKET;
+  process.env.TMUX = "/tmp/tmux-fake";
+  process.env.PI_TOUR_NVIM_BIN = nvimBin;
+  process.env.PI_TOUR_TMUX_BIN = tmuxBin;
+  try {
+    // Fast socket, flaky first two handshakes: retrying wins.
+    await writeFile(tmuxBin, (await readFile(tmuxBin, "utf8")).replace("${DELAY}", "50"));
+    process.env.PI_NVIM_OPEN_TIMEOUT_MS = "5000";
+    const opened = await ensureNvim(dir);
+    assert.equal(opened.opened, true);
+    assert.equal(Number(await readFile(counter, "utf8")), 3, "the handshake is retried, not given up on");
+
+    // Never answers: the window is closed and the error says why.
+    const nvimDead = join(dir, "fake-nvim-dead");
+    await writeFile(nvimDead, `#!${process.execPath}
+process.stdout.write(JSON.stringify({ ok: false, error: "channel closed" }) + "\\n");
+process.exit(1);
+`);
+    execFileSync("chmod", ["755", nvimDead]);
+    process.env.PI_TOUR_NVIM_BIN = nvimDead;
+    delete process.env.PI_NVIM_SOCKET;
+    process.env.PI_NVIM_OPEN_TIMEOUT_MS = "1200";
+    await assert.rejects(ensureNvim(dir), /did not answer within/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n");
+    assert.ok(calls.some((call) => call.startsWith("kill-pane -t %99")), `expected a cleanup call, got ${calls.join(" | ")}`);
+    assert.equal(process.env.PI_NVIM_SOCKET, undefined, "a failed open must not leave a socket behind");
+  } finally {
+    for (const [key, value] of [["TMUX", previous.tmux], ["PI_NVIM_SOCKET", previous.socket], ["PI_IDE_TOKEN", previous.ide], ["PI_TOUR_NVIM_BIN", previous.bin], ["PI_TOUR_TMUX_BIN", previous.tmuxBin], ["PI_NVIM_OPEN_TIMEOUT_MS", previous.budget]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});

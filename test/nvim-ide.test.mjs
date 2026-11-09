@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { jiti } from "./host.mjs";
 const { discoverIde } = await jiti.import("../extensions/nvim/discovery.ts");
-const { resolveEndpoint, nvimRequest } = await jiti.import("../extensions/nvim/nvim.ts");
+const { hasNvim, resolveEndpoint, nvimRequest } = await jiti.import("../extensions/nvim/nvim.ts");
 const { openDiff } = await jiti.import("../extensions/nvim/diff.ts");
 const { default: plugin } = await jiti.import("../extensions/nvim/index.ts");
 
@@ -213,5 +213,37 @@ test("show and selection tools use the unified bridge", async () => {
   } finally {
     if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+  }
+});
+
+test("an explicit socket wins over another Neovim that published a lock", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-ide-cwd2-"));
+  const ide = await mkdtemp(join(tmpdir(), "pi-ide-dir2-"));
+  const lockSocket = join(ide, "old-nvim.sock");
+  const ownSocket = join(ide, "own-nvim.sock");
+  await writeFile(lockSocket, "");
+  await writeFile(ownSocket, "");
+  // The other Neovim was seen more recently, so discovery would pick it.
+  await writeFile(join(ide, "1.lock"), JSON.stringify({ pid: process.pid, socket: lockSocket, workspaceFolders: [cwd], authToken: "other-token" }));
+  const previous = { dir: process.env.PI_IDE_DIR, socket: process.env.PI_NVIM_SOCKET, duet: process.env.DUET_NVIM_SOCKET, listen: process.env.NVIM_LISTEN_ADDRESS, token: process.env.PI_IDE_TOKEN };
+  process.env.PI_IDE_DIR = ide;
+  process.env.PI_NVIM_SOCKET = ownSocket;
+  process.env.PI_IDE_TOKEN = "own-token";
+  delete process.env.DUET_NVIM_SOCKET; delete process.env.NVIM_LISTEN_ADDRESS;
+  try {
+    // ensureNvim records the socket it spawned in the environment: that one must
+    // win, otherwise the tour lands in the other window and the new one stays empty.
+    assert.deepEqual(resolveEndpoint(cwd), { socket: ownSocket, token: "own-token" });
+    assert.equal(hasNvim(cwd), true);
+
+    // A stale variable must not shadow a live lock.
+    process.env.PI_NVIM_SOCKET = join(ide, "gone.sock");
+    const fromLock = resolveEndpoint(cwd);
+    assert.equal(fromLock.socket, lockSocket);
+    assert.equal(fromLock.token, "other-token");
+  } finally {
+    for (const [key, value] of [["PI_IDE_DIR", previous.dir], ["PI_NVIM_SOCKET", previous.socket], ["DUET_NVIM_SOCKET", previous.duet], ["NVIM_LISTEN_ADDRESS", previous.listen], ["PI_IDE_TOKEN", previous.token]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
   }
 });
