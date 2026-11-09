@@ -25,6 +25,7 @@
     "extensions/nvim/*.ts",
     "extensions/index/*.ts",
     "extensions/rtk/*.ts",
+    "extensions/usage/*.ts",
     "extensions/batch/*.ts"
   ]
 }

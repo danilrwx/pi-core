@@ -144,6 +144,23 @@ output. Холодный ход отмечается `COLD`, если prompt ≥
 на ≥ 35% относительно предыдущего хода. Перед/после compaction приходят
 уведомления о сбросе prompt cache. `/cache clear` очищает историю.
 
+### Использование (`usage`)
+
+`/usage` — компактная локальная сводка в духе Claude Code, без внешнего
+пакета и без выдуманных лимитов подписки:
+
+- текущая сессия: стоимость, модели, сообщения, input/output/cache, полоса
+  контекста и процент cache reuse;
+- `Today`, `Current week`, `All time`: стоимость, сообщения, токены, cache%;
+- `By model · this week`: разбивка по моделям.
+
+Данные берутся из usage в assistant-сообщениях, compaction/branch summaries и
+usage-записях сессий. Разбор кешируется в `~/.pi/agent/usage-cache.json`
+(`0600`, по size+mtime файла); тёплый запуск не перечитывает неизменившиеся
+сессии. Графиков, insights и CSV-экспорта нет — для них остаётся внешний
+`/usage`, если понадобится. Bars показывают только наблюдаемые context/cache,
+а не лимиты провайдера.
+
 ### Долговременная память (`memory`)
 
 Локальные заметки между сессиями: `memory` tool и `/memory`.
@@ -541,6 +558,7 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/question/index.ts",
     "/home/danil/w/pi-core/extensions/nvim/index.ts",
     "/home/danil/w/pi-core/extensions/index/index.ts",
+    "/home/danil/w/pi-core/extensions/usage/index.ts",
     "/home/danil/w/pi-core/extensions/memory/index.ts",
     "/home/danil/w/pi-core/extensions/notify/index.ts",
     "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts",
@@ -575,7 +593,7 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
 bash-head-tail, checkpoint/rewind, cache-warming, cache-guard, batch, RTK rewrite,
-LSP/tree-sitter index, Claude-совместимая память (импорт, Markdown/frontmatter,
+usage dashboard, LSP/tree-sitter index, Claude-совместимая память (импорт, Markdown/frontmatter,
 auto-recall, auto-memory, Jev+локальный кеш) и needs-input уведомления.
 
 ## Что пока не перенесено
