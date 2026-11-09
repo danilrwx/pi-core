@@ -97,6 +97,7 @@ when needed.
 | [`btw`](extensions/btw) | `/btw <question>` sends the latest main-session request plus a side question. No tools, no history mutation, 90-second deadline, separate cost status. |
 | [`todo`](extensions/todo) | `todo_write` plus a persistent panel above the editor. Replace-all semantics, session-scoped snapshots, auto-clear only after a user message. |
 | [`question`](extensions/question) | A 1–4 question terminal dialog with tabs, multi-select, free-text answers, and a single blocking tool call. Inside the answer editor `Alt+M` dictates straight into the field, so a spoken answer can be mixed with typed text before submitting. |
+| [`walkthrough`](extensions/walkthrough) | `walkthrough` presents a change set as a narrated tour **in the chat**: the model picks the hunks that carry the story and explains why each one exists, the diff itself is read from git and rendered with old/new line numbers and `why`/`note` blocks. The chat-side counterpart of `review_tour`, for when the user wants to understand a change without leaving the transcript. |
 | [`batch`](extensions/batch) | Up to 8 independent **read-only** calls in one turn: `read`, `grep`, `find`, `ls`, `index`, `lsp`. Per-call and total output caps, partial failures, image passthrough. |
 | [`usage`](extensions/usage) | A compact, local `/usage` panel in a Claude-Code-like style: current session, today, current week, all time, cache reuse, context bar, and per-model cost. |
 | [`notify`](extensions/notify) | OSC 99 in Kitty, OSC 777 elsewhere. Fires when the agent is ready or needs input, not after every low-level retry. |
@@ -305,7 +306,7 @@ Typecheck the extension set:
 npm run typecheck:agent-features
 ```
 
-The tests use temporary directories, separate process groups, and local HTTP/WebSocket fakes. They do not call real models, microphones, or paid APIs. The suite covers permission and session state, job cleanup, bounded logs, atomic saves, `/btw` cancellation, codemode, cache warming, AST shell parsing, partial output, read-watch, images, voice, todo, question, Neovim tour/discovery, `index`, memory, notify, checkpoints, batch, RTK, the local usage collector, and the vendored-file lock.
+The tests use temporary directories, separate process groups, and local HTTP/WebSocket fakes. They do not call real models, microphones, or paid APIs. The suite covers permission and session state, job cleanup, bounded logs, atomic saves, `/btw` cancellation, codemode, cache warming, AST shell parsing, partial output, read-watch, images, voice, todo, question, Neovim tour/discovery, `index`, memory, notify, checkpoints, batch, RTK, walkthrough diff parsing and rendering, the local usage collector, and the vendored-file lock.
 
 ---
 

@@ -53,6 +53,7 @@
       "extensions/notify/index.ts",
       "extensions/index/index.ts",
       "extensions/batch/index.ts",
+      "extensions/walkthrough/index.ts",
       "extensions/rtk/index.ts",
       "extensions/golangci-lint/index.ts",
       "extensions/bash-head-tail/index.ts",

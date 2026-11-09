@@ -26,6 +26,7 @@
     "extensions/index/*.ts",
     "extensions/rtk/*.ts",
     "extensions/usage/*.ts",
-    "extensions/batch/*.ts"
+    "extensions/batch/*.ts",
+    "extensions/walkthrough/*.ts"
   ]
 }

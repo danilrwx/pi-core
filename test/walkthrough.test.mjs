@@ -1,0 +1,184 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { jiti } from "./host.mjs";
+
+const { parseUnifiedDiff, selectHunks, findFile, hunkSpan } = await jiti.import("../extensions/walkthrough/diff.ts");
+const { TourView } = await jiti.import("../extensions/walkthrough/render.ts");
+const { default: plugin } = await jiti.import("../extensions/walkthrough/index.ts");
+
+const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text };
+
+const SAMPLE = `diff --git a/src/app.ts b/src/app.ts
+index 1111111..2222222 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,4 +1,5 @@ function start
+ const a = 1;
+-const b = 2;
++const b = 3;
++const c = 4;
+ const d = 5;
+@@ -20,3 +21,3 @@ function other
+ keep
+-old
++new
+ tail
+diff --git a/docs/readme.md b/docs/readme.md
+index 3333333..4444444 100644
+--- a/docs/readme.md
++++ b/docs/readme.md
+@@ -1 +1 @@
+-hello
++world
+`;
+
+function load() {
+  let definition;
+  plugin({ registerTool(value) { definition = value; } });
+  return definition;
+}
+
+async function repo(files) {
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-walkthrough-"));
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  for (const [path, content] of Object.entries(files)) {
+    await writeFile(join(dir, path), content);
+    git("add", path);
+  }
+  git("commit", "-qm", "base");
+  return { dir, git };
+}
+
+test("parses files, hunks and line numbers from a unified diff", () => {
+  const files = parseUnifiedDiff(SAMPLE);
+  assert.equal(files.length, 2);
+  const [app, docs] = files;
+  assert.equal(app.path, "src/app.ts");
+  assert.equal(app.hunks.length, 2);
+  assert.equal(app.additions, 3);
+  assert.equal(app.deletions, 2);
+  assert.equal(app.hunks[0].context, "function start");
+  assert.equal(app.hunks[0].header, "@@ -1,4 +1,5 @@");
+  assert.deepEqual(app.hunks[0].lines.map((line) => line.kind), ["context", "del", "add", "add", "context"]);
+  assert.deepEqual([app.hunks[0].lines[1].oldLine, app.hunks[0].lines[2].newLine], [2, 2]);
+  assert.deepEqual(hunkSpan(app.hunks[1]), [21, 23]);
+  assert.equal(docs.hunks[0].lines.at(-1).text, "world");
+});
+
+test("selects hunks by index, by line range, and defaults to the first ones", () => {
+  const [app] = parseUnifiedDiff(SAMPLE);
+  assert.deepEqual(selectHunks(app, { hunk: 2 }).hunks.map((h) => h.newStart), [21]);
+  assert.deepEqual(selectHunks(app, { lines: [22, 22] }).hunks.map((h) => h.newStart), [21]);
+  assert.deepEqual(selectHunks(app, { lines: [2, 3] }).hunks.map((h) => h.newStart), [1]);
+  assert.equal(selectHunks(app, {}).hunks.length, 2);
+  assert.match(selectHunks(app, { hunk: 9 }).reason, /does not exist/);
+  assert.match(selectHunks(app, { lines: [900, 999] }).reason, /no hunk covers/);
+  assert.equal(findFile(parseUnifiedDiff(SAMPLE), "app.ts").path, "src/app.ts");
+  assert.equal(findFile(parseUnifiedDiff(SAMPLE), "./docs/readme.md").path, "docs/readme.md");
+  assert.equal(findFile(parseUnifiedDiff(SAMPLE), "nope.ts"), undefined);
+});
+
+test("renders the tour with diff colors, the reasoning and the header counts", () => {
+  const view = new TourView({
+    title: "Dictation reaches the dialog",
+    intro: "The dialog now owns the recording.",
+    base: "HEAD → working tree",
+    fileCount: 2,
+    additions: 3,
+    deletions: 2,
+    stops: [
+      { title: "Borrow the microphone", why: "The overlay holds focus, so the global shortcut never fires.", file: "src/app.ts", hunkLabel: "hunk 1/2", hunks: parseUnifiedDiff(SAMPLE)[0].hunks.slice(0, 1) },
+      { title: "Missing file", why: "Should warn.", file: "gone.ts", hunks: [], warning: "gone.ts is not part of this diff" },
+    ],
+  }, theme);
+  const lines = view.render(72);
+  const screen = lines.join("\n");
+  assert.match(screen, /changes tour · Dictation reaches the dialog/);
+  assert.match(screen, /2 files · \+3 −2 · 2 stops/);
+  assert.match(screen, /function start/);
+  assert.match(screen, /\+ const c = 4;/);
+  assert.match(screen, /- const b = 2;/);
+  assert.match(screen, /why {2}The overlay holds focus/);
+  assert.match(screen, /gone\.ts is not part of this diff/);
+  for (const line of lines) assert.ok(line.length <= 200, `unbounded line: ${line}`);
+});
+
+test("presents a real git diff, picks hunks and reports the summary", async () => {
+  const { dir, git } = await repo({ "app.js": "export const a = 1;\n", "other.txt": "keep\n" });
+  try {
+    await writeFile(join(dir, "app.js"), "export const a = 1;\nexport const b = 2;\n");
+    await writeFile(join(dir, "other.txt"), "changed\n");
+    const definition = load();
+    const result = await definition.execute("id", {
+      title: "Two files",
+      base: "HEAD",
+      stops: [
+        { title: "New export", why: "The dialog needs ab", file: "app.js", hunk: 1 },
+        { title: "Copy change", why: "Words", file: "other.txt", lines: [1, 1] },
+      ],
+    }, undefined, undefined, { cwd: dir });
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /Walkthrough shown against HEAD → working tree: 2 files, \+2\/−1, 2 stops/);
+    assert.match(result.content[0].text, /1\. New export \(app.js, hunk 1\)/);
+    assert.equal(result.details.stops[0].file, "app.js");
+    assert.deepEqual(result.details.stops[0].hunks, [1]);
+    const screen = result.details.tour && new TourView(result.details.tour, theme).render(70).join("\n");
+    assert.match(screen, /\+ export const b = 2;/);
+    assert.match(screen, /why {2}The dialog needs ab/);
+    git("checkout", "--", ".");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("compares against a named revision and rejects bad input", async () => {
+  const { dir, git } = await repo({ "app.js": "one\n" });
+  try {
+    await writeFile(join(dir, "app.js"), "two\n");
+    git("commit", "-qam", "change");
+    const definition = load();
+    const committed = await definition.execute("id", { base: "HEAD~1", stops: [{ title: "Diff vs parent", why: "Shows the commit", file: "app.js" }] }, undefined, undefined, { cwd: dir });
+    assert.match(committed.content[0].text, /HEAD~1 → working tree/);
+    assert.match(committed.content[0].text, /\+1\/−1/);
+
+    const badBase = await definition.execute("id", { base: "no-such-ref", stops: [{ title: "x", why: "y", file: "app.js" }] }, undefined, undefined, { cwd: dir });
+    assert.equal(badBase.isError, true);
+    assert.match(badBase.content[0].text, /Unknown base revision "no-such-ref"/);
+
+    const noStops = await definition.execute("id", { stops: [] }, undefined, undefined, { cwd: dir });
+    assert.equal(noStops.isError, true);
+    assert.match(noStops.content[0].text, /at least one stop/);
+
+    const tooMany = await definition.execute("id", { stops: Array.from({ length: 13 }, () => ({ title: "t", why: "w" })) }, undefined, undefined, { cwd: dir });
+    assert.equal(tooMany.isError, true);
+    assert.match(tooMany.content[0].text, /at most 12/);
+
+    const missingFile = await definition.execute("id", { base: "HEAD~1", stops: [{ title: "Ghost", why: "Not there", file: "ghost.js" }] }, undefined, undefined, { cwd: dir });
+    assert.match(missingFile.details.stops[0].warning, /file not in diff/);
+
+    const notRepo = await definition.execute("id", { stops: [{ title: "x", why: "y" }] }, undefined, undefined, { cwd: tmpdir() });
+    assert.equal(notRepo.isError, true);
+    assert.match(notRepo.content[0].text, /Not a git repository/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an empty change set says so instead of rendering an empty tour", async () => {
+  const { dir } = await repo({ "app.js": "one\n" });
+  try {
+    const definition = load();
+    const clean = await definition.execute("id", { stops: [{ title: "x", why: "y", file: "app.js" }] }, undefined, undefined, { cwd: dir });
+    assert.equal(clean.isError, true);
+    assert.match(clean.content[0].text, /no changes against HEAD/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
