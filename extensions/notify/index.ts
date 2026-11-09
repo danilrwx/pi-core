@@ -30,6 +30,8 @@ export default function notify(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", () => {
+    // session_start can fire more than once in a long-lived process; keep one listener.
+    if (listener) needsInput.off("needs-input", listener);
     listener = (event) => { if (enabled) send("pi", `${event.body ?? event.title}`); };
     needsInput.on("needs-input", listener);
   });

@@ -45,3 +45,12 @@ test("rtk extension mutates safe bash calls only", async () => {
   await handlers.get("tool_call")(event, { hasUI: false, signal: undefined });
   assert.equal(event.input.command, "rtk git status");
 });
+
+test("rewrite originals stay available for a later permission handler", async () => {
+  const { rememberOriginalCommand, originalCommand, forgetOriginalCommand } = await jiti.import("../extensions/lib/original-command.ts");
+  rememberOriginalCommand("call-1", "git push --force origin main");
+  assert.equal(originalCommand("call-1", "rtk git push --force origin main"), "git push --force origin main");
+  assert.equal(originalCommand("missing", "rtk git status"), "rtk git status");
+  forgetOriginalCommand("call-1");
+  assert.equal(originalCommand("call-1", "rtk git push --force origin main"), "rtk git push --force origin main");
+});

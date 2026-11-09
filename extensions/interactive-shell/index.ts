@@ -136,18 +136,24 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const exitCode = await ctx.ui.custom<number | null>((tui, _theme, _kb, done) => {
+			let status: number | null = 1;
 			tui.stop();
 			process.stdout.write("\x1b[2J\x1b[H");
-
-			const shell = process.env.SHELL || "/bin/sh";
-			const result = spawnSync(shell, ["-c", command], {
-				stdio: "inherit",
-				env: process.env,
-			});
-
-			tui.start();
-			tui.requestRender(true);
-			done(result.status);
+			try {
+				const shell = process.env.SHELL || "/bin/sh";
+				const result = spawnSync(shell, ["-c", command], {
+					stdio: "inherit",
+					env: process.env,
+				});
+				status = result.status;
+			} catch {
+				status = 1;
+			} finally {
+				// Never leave the TUI stopped if the child could not be spawned.
+				tui.start();
+				tui.requestRender(true);
+			}
+			done(status);
 
 			return { render: () => [], invalidate: () => {} };
 		});

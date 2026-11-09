@@ -1,7 +1,8 @@
 /** Copyright 2026 GhabiX. Apache-2.0; see licenses/Apache-2.0-GhabiX.txt.
  * Vendored from pi-background-job 08389a0; modified for pi-core: permissions, private capped logs, path watches.
  */
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
+import { isInside } from "../lib/path-safety.js";
 import { authorizeShell } from "../lib/shell-permission.js";
 import { startPathWatch, type PathWatch } from "./watch-path.ts";
 import { MAX_LOG_BYTES } from "./private-log.ts";
@@ -494,9 +495,18 @@ function installBackgroundJob(pi: ExtensionAPI) {
     async execute(_id, params, signal, _update, ctx) {
       assertName(params.name);
       ensureFreeName(params.name);
+      const target = resolve(ctx.cwd, params.path);
+      if (!isInside(ctx.cwd, target)) {
+        if (!ctx.hasUI) {
+          return { content: [{ type: "text" as const, text: "Error: watching a path outside the project requires the interactive UI." }], details: {}, isError: true };
+        }
+        if (!await ctx.ui.confirm("Watch outside the project?", target)) {
+          return { content: [{ type: "text" as const, text: "Cancelled: the path is outside the project." }], details: {}, isError: true };
+        }
+      }
       const sessionId = ctx.sessionManager.getSessionId();
       const watch = await startPathWatch({
-        name: params.name, path: params.path, cwd: ctx.cwd, description: params.description,
+        name: params.name, path: target, cwd: ctx.cwd, description: params.description,
         sessionId, recursive: params.recursive, timeoutMs: params.timeout_ms, signal,
       }, (text) => {
         if (runtime.sessionId === sessionId && runtime.api) send(runtime.api, {

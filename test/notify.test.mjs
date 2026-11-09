@@ -33,3 +33,17 @@ test("needs-input events send a notification when enabled", async () => {
     handlers.get("session_shutdown")?.({}, {});
   }
 });
+
+test("notify keeps a single needs-input listener across repeated session_start", async () => {
+  const { default: notify } = await jiti.import("../extensions/notify/index.ts");
+  const { needsInput } = await jiti.import("../extensions/lib/needs-input.ts");
+  const handlers = new Map();
+  let state = { on(name, fn) { handlers.set(name, fn); }, registerCommand() {} };
+  notify(state);
+  const before = needsInput.listenerCount("needs-input");
+  handlers.get("session_start")({}, {});
+  handlers.get("session_start")({}, {});
+  assert.equal(needsInput.listenerCount("needs-input"), before + 1);
+  handlers.get("session_shutdown")?.({}, {});
+  assert.equal(needsInput.listenerCount("needs-input"), before);
+});

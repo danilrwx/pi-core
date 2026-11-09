@@ -8,6 +8,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createLocalBashOperations, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { forgetOriginalCommand, rememberOriginalCommand } from "../lib/original-command.js";
 import {
   MIN_RTK_VERSION,
   acceptableRewrite,
@@ -146,6 +147,7 @@ export default function rtkExtension(pi: ExtensionAPI): void {
     if (event.parentToolCallId) return;
     const original = event.input.command;
     if (typeof original !== "string") return;
+    rememberOriginalCommand(event.toolCallId, original);
     stats.calls++;
     try {
       const next = await rewrite(pi, original, ctx.signal, ctx);
@@ -159,6 +161,10 @@ export default function rtkExtension(pi: ExtensionAPI): void {
       stats.errors++;
       // Fail open: the original command is already in the input.
     }
+  });
+
+  pi.on("tool_result", (event) => {
+    forgetOriginalCommand(event.toolCallId);
   });
 
   pi.on("user_bash", async (event, ctx) => {

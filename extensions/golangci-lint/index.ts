@@ -133,7 +133,7 @@ export default function (pi: ExtensionAPI) {
   let lintRunning: boolean = false;
 
   const touchedFiles: Set<string> = new Set();
-  const pendingModules: Set<string> = new Set();
+  const pendingModules: Map<string, Set<string>> = new Map();
   const filesWithoutGoMod: Set<string> = new Set();
 
   function findGitRoot(cwd: string): string | undefined {
@@ -240,11 +240,11 @@ export default function (pi: ExtensionAPI) {
     return path.extname(filePath).toLowerCase() === ".go";
   }
 
-  function runGolangciLint(moduleRoot: string): { success: boolean; output: string; fixes: string[]; workingDir: string } {
+  function runGolangciLint(moduleRoot: string, files: Set<string>): { success: boolean; output: string; fixes: string[]; workingDir: string } {
     const fixes: string[] = [];
 
     try {
-      child_process.execSync("which golangci-lint", { stdio: "ignore", cwd: moduleRoot });
+      child_process.execFileSync("golangci-lint", ["--version"], { stdio: "ignore", cwd: moduleRoot });
     } catch {
       return { success: false, output: "golangci-lint not found in PATH", fixes: [], workingDir: moduleRoot };
     }
@@ -253,22 +253,24 @@ export default function (pi: ExtensionAPI) {
       return { success: false, output: "go.mod not found", fixes: [], workingDir: moduleRoot };
     }
 
+    // --fix only the packages that contain files the agent actually touched,
+    // never the whole module: an unrelated package may have pre-existing
+    // findings and must not be rewritten behind the user's back.
+    const dirs = [...new Set([...files].map((file) => path.relative(moduleRoot, path.dirname(file)) || "."))].sort();
+    if (dirs.length === 0) return { success: true, output: "No fixes applied", fixes, workingDir: moduleRoot };
     try {
-      const result = child_process.execSync(
-        "golangci-lint run --fix --timeout 5m ./... 2>&1",
-        {
-          cwd: moduleRoot,
-          encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024,
-        }
+      const result = child_process.execFileSync(
+        "golangci-lint",
+        ["run", "--fix", "--timeout", "5m", ...dirs],
+        { cwd: moduleRoot, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 },
       );
 
       return { success: true, output: result || "No fixes applied", fixes, workingDir: moduleRoot };
     } catch (error: any) {
-      if (error.stdout) {
-        return { success: true, output: error.stdout as string, fixes, workingDir: moduleRoot };
-      }
-      return { success: false, output: (error.message as string) || "Unknown error", fixes, workingDir: moduleRoot };
+      // A non-zero exit means lint findings or a tool error; surface it as
+      // failure instead of pretending the run succeeded.
+      const output = [error.stdout, error.stderr].filter(Boolean).join("\n").trim();
+      return { success: false, output: output || (error.message as string) || "Unknown error", fixes, workingDir: moduleRoot };
     }
   }
 
@@ -320,7 +322,9 @@ export default function (pi: ExtensionAPI) {
     for (const filePath of files) {
       const moduleRoot = findNearestGoMod(filePath);
       if (moduleRoot) {
-        pendingModules.add(moduleRoot);
+        const files = pendingModules.get(moduleRoot) ?? new Set<string>();
+        files.add(filePath);
+        pendingModules.set(moduleRoot, files);
       } else {
         filesWithoutGoMod.add(filePath);
       }
@@ -340,7 +344,7 @@ export default function (pi: ExtensionAPI) {
     if (pendingModules.size === 0 && filesWithoutGoMod.size === 0) return;
 
     lintRunning = true;
-    const modules = Array.from(pendingModules).sort();
+    const modules = [...pendingModules.entries()].sort(([a], [b]) => a.localeCompare(b));
     const missingGoModCount = filesWithoutGoMod.size;
     pendingModules.clear();
     filesWithoutGoMod.clear();
@@ -361,8 +365,8 @@ export default function (pi: ExtensionAPI) {
       const outputs: string[] = [];
       const silentOutputs: string[] = [];
 
-      for (const moduleRoot of modules) {
-        const result = runGolangciLint(moduleRoot);
+      for (const [moduleRoot, files] of modules) {
+        const result = runGolangciLint(moduleRoot, files);
         const relModule = path.relative(ctx.cwd, moduleRoot) || ".";
 
         if (!result.success) {

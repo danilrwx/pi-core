@@ -42,6 +42,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SHELL_PERMISSION_EVENT, type ShellPermissionRequest } from "../lib/shell-permission.js";
+import { originalCommand } from "../lib/original-command.js";
 import { emitNeedsInput } from "../lib/needs-input.js";
 import { classifyShellCommand } from "./shell-ast.js";
 import { completeArgs } from "../lib/complete.js";
@@ -603,7 +604,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "bash") {
-      return handleBashToolCall(state, event.input.command as string, ctx);
+      // RTK may run before this handler; judge the command the model asked for.
+      return handleBashToolCall(state, originalCommand(event.toolCallId, event.input.command as string), ctx);
     }
 
     if (event.toolName === "write" || event.toolName === "edit") {

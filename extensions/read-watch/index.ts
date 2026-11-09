@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { completeFirstWords } from "../lib/complete.js";
+import { isInside } from "../lib/path-safety.js";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ReadTracker, fingerprint, type ObservedFile } from "./tracker.js";
 
@@ -51,6 +52,7 @@ export default function readWatch(pi: ExtensionAPI) {
     }
     for (const record of [...records.values()].slice(-256)) {
       if (generation !== epoch) return;
+      if (!isInside(ctx.cwd, record.path)) continue;
       // Stale entries can point at deleted/renamed paths from an older session.
       if (await fingerprint(record.path) === "missing") continue;
       current.observe(record);
@@ -67,6 +69,7 @@ export default function readWatch(pi: ExtensionAPI) {
     if (!current || typeof inputPath !== "string") return;
     const generation = epoch;
     const path = resolve(ctx.cwd, inputPath);
+    if (!isInside(ctx.cwd, path)) return;
     if (event.toolName === "read") {
       const record = { path, fingerprint: await fingerprint(path) };
       if (generation === epoch) reads.set(event.toolCallId, record);
