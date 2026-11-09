@@ -86,3 +86,21 @@ test("voice config rejects invalid input", () => {
   assert.throws(() => voice.validateVoice({ language: "--shell" }), /language/);
   assert.throws(() => voice.validateVoice({ model: 123 }), /model/);
 });
+
+test("voice registers the shared dictation service and drops it on shutdown", async () => {
+  const { getDictationService } = await jiti.import("../extensions/lib/dictation.ts");
+  const handlers = new Map();
+  const pi = {
+    on: (name, handler) => { handlers.set(name, handler); },
+    registerShortcut() {},
+    registerCommand() {},
+  };
+  voice.default(pi);
+  const service = getDictationService();
+  assert.ok(service, "voice must publish itself for other UIs");
+  assert.equal(service.phase(), "idle");
+  assert.deepEqual(service.snapshot(), { phase: "idle", muted: false, elapsed: 0, level: 0, text: "" });
+
+  await handlers.get("session_shutdown")();
+  assert.equal(getDictationService(), undefined, "shutdown must not leave a stale service behind");
+});

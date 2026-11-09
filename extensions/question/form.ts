@@ -3,12 +3,15 @@ import {
   Editor, Key, matchesKey, visibleWidth, wrapTextWithAnsi,
   type Component, type EditorTheme, type TUI,
 } from "@earendil-works/pi-tui";
+import { getDictationService, type DictationService } from "../lib/dictation.js";
 import type { Question, QuestionResult } from "./normalize.js";
 
 const CUSTOM_LABEL = "Type your own answer";
 
 export function createQuestionForm(
   tui: TUI, theme: Theme, questions: Question[], done: (result: QuestionResult) => void,
+  /** Injected in tests; by default whatever the `voice` extension registered. */
+  dictation: DictationService | undefined = getDictationService(),
 ): Component {
   let tab = 0;
   let cursor = 0;
@@ -18,6 +21,11 @@ export function createQuestionForm(
   const custom: (string | undefined)[] = questions.map(() => undefined);
   const answers: (string[] | undefined)[] = questions.map(() => undefined);
   const isMulti = questions.length > 1;
+  /** True while this form owns the recording, so leaving it can stop dictation. */
+  let dictating = false;
+  let dictationNotice: string | undefined;
+  /** A transcript that lands after the form closed must not vanish silently. */
+  let closed = false;
 
   const refresh = () => { cached = undefined; tui.requestRender(); };
   const question = () => questions[tab];
@@ -25,7 +33,46 @@ export function createQuestionForm(
     const current = question();
     return current ? [...current.options.map((option) => option.label), CUSTOM_LABEL] : [];
   };
-  const finish = (dismissed: boolean) => done({ questions, answers: answers.map((answer) => answer ?? []), dismissed });
+  const finish = (dismissed: boolean) => {
+    stopDictation();
+    closed = true;
+    done({ questions, answers: answers.map((answer) => answer ?? []), dismissed });
+  };
+  function stopDictation() {
+    dictationNotice = undefined;
+    if (!dictating || !dictation) return;
+    dictating = false;
+    void dictation.cancel();
+  }
+  /**
+   * Alt+M inside the answer editor: dictate and insert at the cursor, so a
+   * spoken answer can be mixed with typed text before submitting. The global
+   * voice shortcut raises the recording first if it wins the race; the service
+   * adopts this form as the target either way.
+   */
+  async function dictate() {
+    if (!dictation) { dictationNotice = "Dictation is not available: the voice extension is not loaded."; refresh(); return; }
+    if (dictating && dictation.phase() === "recording") { await dictation.stop(); return; }
+    dictationNotice = undefined;
+    const attached = await dictation.start({
+      partial: () => refresh(),
+      state: () => refresh(),
+      final: (text) => {
+        dictating = false;
+        if (closed) { void dictation?.cancel(); return; }
+        const spoken = text.trim();
+        if (spoken) editor.insertTextAtCursor(editor.getText().trim() ? ` ${spoken}` : spoken);
+        refresh();
+      },
+      error: (message) => {
+        dictating = false;
+        if (closed) { void dictation?.cancel(); return; }
+        dictationNotice = message; refresh();
+      },
+    });
+    if (attached) { dictating = true; if (closed) await dictation.cancel(); refresh(); }
+    else refresh();
+  }
   function advance() {
     if (!isMulti) { finish(false); return; }
     tab = Math.min(tab + 1, questions.length);
@@ -55,6 +102,7 @@ export function createQuestionForm(
   editor.onSubmit = (value: string) => {
     const text = value.trim();
     inputMode = false;
+    stopDictation();
     editor.setText("");
     if (!text) { refresh(); return; }
     custom[tab] = text;
@@ -65,7 +113,8 @@ export function createQuestionForm(
 
   function handleInput(data: string) {
     if (inputMode) {
-      if (matchesKey(data, Key.escape)) { inputMode = false; editor.setText(""); refresh(); return; }
+      if (matchesKey(data, Key.escape)) { inputMode = false; stopDictation(); editor.setText(""); refresh(); return; }
+      if (matchesKey(data, "alt+m")) { void dictate(); return; }
       editor.handleInput(data);
       refresh();
       return;
@@ -134,8 +183,20 @@ export function createQuestionForm(
       lines.push("");
       addPrefixed(" ", theme.fg("muted", "Your answer:"));
       for (const line of editor.render(Math.max(1, renderWidth - 2))) lines.push(` ${line}`);
+      const live = dictation?.snapshot();
+      if (dictating && live && live.phase !== "idle") {
+        const seconds = `${Math.floor(live.elapsed / 60)}:${String(live.elapsed % 60).padStart(2, "0")}`;
+        const what = live.muted ? "muted" : live.text.trim() || (live.phase === "transcribing" ? "transcribing…" : "listening…");
+        lines.push("");
+        addPrefixed(" ", theme.fg("accent", `🎙 ${seconds} · ${what}`));
+      }
+      if (dictationNotice) {
+        lines.push("");
+        addPrefixed(" ", theme.fg("warning", dictationNotice));
+      }
       lines.push("");
-      addPrefixed(" ", theme.fg("dim", "Enter submit · Esc back"));
+      const dictateHint = dictation ? " · Alt+M dictate" : "";
+      addPrefixed(" ", theme.fg("dim", `Enter submit · Esc back${dictateHint}`));
     } else if (tab === questions.length) {
       addPrefixed(" ", theme.fg("accent", theme.bold("Answers")));
       lines.push("");

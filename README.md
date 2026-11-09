@@ -96,7 +96,7 @@ when needed.
 | [`background-jobs`](extensions/background-jobs) | `background_job`, `monitor`, and `watch_path`. Slow builds and tests move off the current turn; completion arrives as a message, without polling. Unix process groups, private 8 MiB logs, 30-day retention. |
 | [`btw`](extensions/btw) | `/btw <question>` sends the latest main-session request plus a side question. No tools, no history mutation, 90-second deadline, separate cost status. |
 | [`todo`](extensions/todo) | `todo_write` plus a persistent panel above the editor. Replace-all semantics, session-scoped snapshots, auto-clear only after a user message. |
-| [`question`](extensions/question) | A 1–4 question terminal dialog with tabs, multi-select, free-text answers, and a single blocking tool call. |
+| [`question`](extensions/question) | A 1–4 question terminal dialog with tabs, multi-select, free-text answers, and a single blocking tool call. Inside the answer editor `Alt+M` dictates straight into the field, so a spoken answer can be mixed with typed text before submitting. |
 | [`batch`](extensions/batch) | Up to 8 independent **read-only** calls in one turn: `read`, `grep`, `find`, `ls`, `index`, `lsp`. Per-call and total output caps, partial failures, image passthrough. |
 | [`usage`](extensions/usage) | A compact, local `/usage` panel in a Claude-Code-like style: current session, today, current week, all time, cache reuse, context bar, and per-model cost. |
 | [`notify`](extensions/notify) | OSC 99 in Kitty, OSC 777 elsewhere. Fires when the agent is ready or needs input, not after every low-level retry. |
@@ -121,7 +121,7 @@ when needed.
 | [`checkpoint`](extensions/checkpoint) | File-level snapshots before `edit`/`write`/`propose_change`; gzip blobs, safety checkpoint before restore, `/checkpoint`, `/rewind`, and a confirmation-gated `checkpoint` tool. |
 | [`read-watch`](extensions/read-watch) | Fingerprints every successful read, watches its parent directory, and blocks edits to stale files until they are read again. Project-local paths only. |
 | [`image-preview`](extensions/image-preview) | Inline images in the draft, `Alt+I` gallery, short `🖼1` paste tokens, and Kitty Unicode placeholders inside tmux. |
-| [`voice`](extensions/voice) | `Alt+M` dictation, `Alt+U` mute, draft-only insertion. Local `pw-record` + `whisper-cli`, or explicit Nari streaming via `/voice api nari`. |
+| [`voice`](extensions/voice) | `Alt+M` dictation, `Alt+U` mute, insertion into the draft or another UI's field (the `question` dialog borrows it through `lib/dictation`). Local `pw-record` + `whisper-cli`, or explicit Nari streaming via `/voice api nari`. |
 
 ### Editor and code intelligence
 
@@ -176,7 +176,7 @@ when needed.
 
 | Key | Action |
 |---|---|
-| `Alt+M` | Start/stop dictation. |
+| `Alt+M` | Start/stop dictation: into the draft, or into the answer field of an open `question` dialog. |
 | `Alt+U` | Mute/unmute the active dictation stream. |
 | `Alt+I` | Open the image gallery; remove draft attachments. |
 | `Ctrl+Shift+T` | Collapse/expand the todo panel. |

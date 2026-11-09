@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 import { completeArgs } from "../lib/complete.js";
+import { setDictationService, type DictationTarget } from "../lib/dictation.js";
 import { ApiDictation, type DictationSession } from "./api.js";
 import { DEFAULT_VOICE, LocalDictation, type VoiceBackend, type VoiceConfig } from "./recorder.js";
 import { formatElapsed, VoicePanel } from "./ui.js";
@@ -49,11 +50,15 @@ export default function voice(pi: ExtensionAPI) {
   let elapsed = 0;
   let ticker: NodeJS.Timeout | undefined;
   let cancellation: Promise<void> | undefined;
+  /** Set while another UI (the question dialog) owns the current recording. */
+  let target: DictationTarget | undefined;
 
   const status = (text?: string) => ctx?.ui.setStatus("voice", text);
+  const isRecording = () => phase === "recording";
   function updatePanel() {
     panel?.set({ backend: activeBackend, muted, level: lastLevel, text: liveText, elapsed });
     status(phase === "idle" ? undefined : muted ? "🔇 muted" : `🎙 ${formatElapsed(elapsed)}`);
+    target?.state?.();
   }
   function openPanel() {
     if (!ctx || ctx.mode !== "tui") return;
@@ -85,7 +90,7 @@ export default function voice(pi: ExtensionAPI) {
     return cancellation = (async () => {
       try { await old?.cancel(); }
       finally {
-        if (generation === epoch) { phase = "idle"; muted = false; closePanel(); status(); }
+        if (generation === epoch) { phase = "idle"; muted = false; target = undefined; closePanel(); status(); }
         cancellation = undefined;
       }
     })();
@@ -98,16 +103,46 @@ export default function voice(pi: ExtensionAPI) {
     try {
       const text = await current.transcribe();
       if (generation !== epoch || !ctx) return;
+      if (target) {
+        target.final(text);
+        return;
+      }
       ctx.ui.pasteToEditor(text); // Preserve the existing draft; the user presses Enter.
       const cost = current instanceof ApiDictation ? ` · ~$${current.estimatedCostUsd().toFixed(4)} estimated` : "";
       ctx.ui.notify(`Dictation inserted into the draft${cost}. Review before sending.`, "info");
     } catch (error) {
-      if (generation === epoch) ctx?.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      const message = error instanceof Error ? error.message : String(error);
+      if (generation === epoch && target) target.error?.(message);
+      else if (generation === epoch) ctx?.ui.notify(message, "error");
     } finally {
       await current.cleanup();
-      if (generation === epoch) { recording = undefined; phase = "idle"; muted = false; liveText = ""; closePanel(); status(); }
+      if (generation === epoch) { recording = undefined; phase = "idle"; muted = false; liveText = ""; target = undefined; closePanel(); status(); }
     }
   }
+  /**
+   * Start dictation for a consumer, or adopt the recording the global shortcut
+   * already started (the overlay and the shortcut may both see the same key).
+   */
+  async function startFor(next: DictationTarget): Promise<boolean> {
+    const busy = phase !== "idle";
+    if (busy && phase === "recording" && !target) {
+      target = next; updatePanel(); return true;
+    }
+    if (busy) {
+      next.error?.(phase === "recording"
+        ? "Dictation is already recording for another input."
+        : "Dictation is busy; try again in a moment.");
+      return false;
+    }
+    target = next;
+    await toggle();
+    // `toggle()` changes phase behind the narrowing above, so re-read it. A
+    // failed start already reported through target.error and cleared the target.
+    if (isRecording()) return true;
+    if (target === next) target = undefined;
+    return false;
+  }
+
   async function toggle() {
     if (phase === "recording") return finish();
     if (phase !== "idle") { ctx?.ui.notify("Voice is busy; /voice cancel stops it.", "info"); return; }
@@ -125,7 +160,7 @@ export default function voice(pi: ExtensionAPI) {
       };
       const partial = (text: string) => {
         if (generation !== epoch) return;
-        liveText = text; updatePanel();
+        liveText = text; updatePanel(); target?.partial?.(text);
       };
       const expired = () => { if (generation === epoch) void finish(); };
       const current: DictationSession = activeBackend === "nari"
@@ -139,7 +174,8 @@ export default function voice(pi: ExtensionAPI) {
     } catch (error) {
       if (generation === epoch) {
         await recording?.cancel(); recording = undefined; phase = "idle"; closePanel(); status();
-        ctx?.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        const message = error instanceof Error ? error.message : String(error);
+        if (target) { target.error?.(message); target = undefined; } else ctx?.ui.notify(message, "error");
       }
     }
   }
@@ -151,6 +187,15 @@ export default function voice(pi: ExtensionAPI) {
     updatePanel();
     ctx?.ui.notify(muted ? "Microphone muted: audio is discarded and not sent." : "Microphone unmuted.", "info");
   }
+  setDictationService({
+    phase: () => phase,
+    snapshot: () => ({ phase, muted, elapsed, level: lastLevel, text: liveText }),
+    start: startFor,
+    stop: finish,
+    cancel,
+    toggleMute,
+  });
+
   pi.on("session_start", (_event, context) => {
     ctx = context;
     if (context.mode !== "tui") return;
@@ -158,8 +203,13 @@ export default function voice(pi: ExtensionAPI) {
       if (phase !== "idle" && matchesKey(data, "escape")) { void cancel(); return { consume: true }; }
     });
   });
-  pi.on("session_shutdown", async () => { unsubscribe?.(); unsubscribe = undefined; await cancel(); ctx = undefined; });
-  pi.registerShortcut("alt+m", { description: "Start/stop dictation (review draft before Enter)", handler: async () => { if (ctx?.mode === "tui") await toggle(); } });
+  pi.on("session_shutdown", async () => { unsubscribe?.(); unsubscribe = undefined; setDictationService(undefined); await cancel(); ctx = undefined; });
+  pi.registerShortcut("alt+m", {
+    description: "Start/stop dictation (review draft before Enter)",
+    // A UI that owns the recording (the question dialog) handles the same key;
+    // toggling here would stop the recording it just started.
+    handler: async () => { if (ctx?.mode === "tui" && !target) await toggle(); },
+  });
   pi.registerShortcut("alt+u", { description: "Mute/unmute the active dictation stream", handler: async () => { if (ctx?.mode === "tui") toggleMute(); } });
   pi.registerCommand("voice", {
     description: "Dictation: /voice, mute, cancel, status, api nari|local, model <file>, language <ru|en|auto>",
