@@ -211,7 +211,9 @@ test("Neovim comments arrive in pi over the session socket", async () => {
   };
   const previous = process.env.PI_NVIM_SOCKET; delete process.env.PI_NVIM_SOCKET;
   nvimTour(pi);
-  const context = { cwd, mode: "tui", sessionManager: { getSessionId: () => "comments-test" } };
+  const statuses = [];
+  const context = { cwd, mode: "tui", sessionManager: { getSessionId: () => "comments-test" },
+    ui: { setStatus(key, value) { statuses.push([key, value]); } } };
   await handlers.get("session_start")({}, context);
   const path = commentSocketPath("comments-test");
   try {
@@ -226,6 +228,9 @@ test("Neovim comments arrive in pi over the session socket", async () => {
     assert.match(messages[0].message.content, /comment_reply/);
     assert.equal(messages[0].message.details.id, "12");
     assert.equal(messages[0].options.deliverAs, "steer");
+    socket.write(JSON.stringify({ type: "status", file: join(cwd, "a.ts"), lsp: ["gopls"], errors: 2, warnings: 1, dirty: 3 }) + "\n");
+    for (let i = 0; i < 100 && !statuses.some(([key]) => key === "nvim"); i++) await new Promise((done) => setTimeout(done, 20));
+    assert.deepEqual(statuses.at(-1), ["nvim", "NVIM · gopls · 2E 1W · 3 dirty"]);
     socket.end();
   } finally {
     await handlers.get("session_shutdown")({}, context);

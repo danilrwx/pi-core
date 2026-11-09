@@ -111,7 +111,18 @@ export default function nvimTour(pi: ExtensionAPI) {
   function handleComment(line: string) {
     let message: any;
     try { message = JSON.parse(line); } catch { return; }
-    if (!ctx || message?.type !== "comment") return;
+    if (!ctx) return;
+    if (message?.type === "status") {
+      const lsp = Array.isArray(message.lsp) ? message.lsp.filter((name: unknown) => typeof name === "string").slice(0, 3).join(",") : "";
+      const errors = Number.isFinite(message.errors) ? message.errors : 0;
+      const warnings = Number.isFinite(message.warnings) ? message.warnings : 0;
+      const dirty = Number.isFinite(message.dirty) ? message.dirty : 0;
+      const parts = ["NVIM", lsp || "LSP off", `${errors}E ${warnings}W`];
+      if (dirty) parts.push(`${dirty} dirty`);
+      ctx.ui.setStatus("nvim", parts.join(" · "));
+      return;
+    }
+    if (message?.type !== "comment") return;
     const raw = typeof message.file === "string" ? resolve(ctx.cwd, message.file) : "";
     if (!raw || !(raw === ctx.cwd || raw.startsWith(`${ctx.cwd}/`))) return;
     const from = Number.isInteger(message.from) ? message.from : 1;
@@ -209,7 +220,8 @@ export default function nvimTour(pi: ExtensionAPI) {
     server?.closeAllConnections?.();
     server?.close(); server = undefined;
     if (serverPath) { try { unlinkSync(serverPath); } catch { /* gone */ } }
-    serverPath = undefined; sessions.clear(); ctx = undefined;
+    serverPath = undefined; sessions.clear();
+    ctx?.ui.setStatus("nvim", undefined); ctx = undefined;
   });
 
   pi.registerTool({

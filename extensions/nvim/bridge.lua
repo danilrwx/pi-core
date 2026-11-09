@@ -94,6 +94,55 @@ local function send(message)
   return true
 end
 
+local function status_payload()
+  local clients = vim.lsp.get_clients({ bufnr = 0 })
+  local lsp = {}
+  for _, client in ipairs(clients) do lsp[#lsp + 1] = client.name end
+  local errors, warnings = 0, 0
+  for _, diagnostic in ipairs(vim.diagnostic.get(0)) do
+    if diagnostic.severity == vim.diagnostic.severity.ERROR then errors = errors + 1
+    elseif diagnostic.severity == vim.diagnostic.severity.WARN then warnings = warnings + 1 end
+  end
+  local dirty = 0
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then dirty = dirty + 1 end
+  end
+  return {
+    type = "status",
+    file = vim.api.nvim_buf_get_name(0),
+    lsp = lsp,
+    errors = errors,
+    warnings = warnings,
+    dirty = dirty,
+  }
+end
+
+function M.send_status()
+  if not M.socket or M.socket == "" then return end
+  send(status_payload())
+end
+
+local status_timer
+local function schedule_status()
+  if status_timer then return end
+  status_timer = vim.defer_fn(function()
+    status_timer = nil
+    M.send_status()
+  end, 200)
+end
+
+local function status_autocmds()
+  local group = vim.api.nvim_create_augroup("PiIdeStatus", { clear = true })
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "BufWritePost", "DiagnosticChanged", "LspAttach", "LspDetach" }, {
+    group = group,
+    callback = schedule_status,
+  })
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = group,
+    callback = schedule_status,
+  })
+end
+
 local function find_comment(id)
   for _, entry in ipairs(state.comments) do
     if tostring(entry.id) == tostring(id) then return entry end
@@ -279,6 +328,8 @@ function M.request(request)
       or (state.tour and state.tour.root == request.root and state.tour or nil)
     M.socket, M.tour = state.socket, state.tour
     keymaps()
+    status_autocmds()
+    schedule_status()
     return { installed = true, stops = M.tour and #M.tour.stops or 0 }
   end
   if request.method == "tour.status" then
@@ -329,6 +380,7 @@ return M.tour_step(1) end
       connected = true,
       server = vim.v.servername,
       file = vim.api.nvim_buf_get_name(vim.api.nvim_get_current_buf()),
+      lsp = status_payload(),
       marks = #vim.api.nvim_buf_get_extmarks(vim.api.nvim_get_current_buf(), ns, 0, -1, {}),
       comment_marks = #vim.api.nvim_buf_get_extmarks(vim.api.nvim_get_current_buf(), ns_comments, 0, -1, {}),
       maps = {
