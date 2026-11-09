@@ -163,6 +163,27 @@ Fingerprints сохраняются custom entries **вне model context** и �
 переименованные файлы не спамят при каждом restore: отсутствующие записи
 пропускаются, а удаление в живой сессии предупреждается один раз.
 
+### Checkpoints / rewind (`checkpoint`)
+
+Перед `edit`/`write`/`propose_change` расширение запоминает **исходное содержимое**
+файла и после успешной правки складывает его в content-addressed gzip-blob.
+Один снимок на файл за ход; rejected/failed tool ничего не пишет.
+
+- `/checkpoint list` — список снимков; `/checkpoint restore <n|id>` — откатить код;
+  `/rewind` — откатить код и перейти по ветке чата через `ctx.navigateTree()`;
+  `/checkpoint off|on` — выключить/включить.
+- Перед restore создаётся **safety checkpoint** текущего состояния, так что
+  восстановление можно отменить повторным restore.
+- При обычном `/fork`/`/tree` хук `session_before_fork` предлагает восстановить
+  код к точке форка.
+- Хранилище: `~/.pi/agent/checkpoints/` (`PI_CHECKPOINT_DIR`), gzip level 1,
+  `0600`, TTL 14 дней, общий лимит 256 МиБ, файл до 2 МиБ, без `fsync`.
+  Исключены `.git`, `node_modules`, `target`, `dist`, `build`, `.venv`,
+  `vendor`, `__pycache__`.
+- Ограничение: снимки покрывают только инструменты `edit`/`write`/
+  `propose_change`. Изменения через `bash`, MCP, внешний редактор или другую
+  сессию не откатываются. Это не замена git.
+
 ### Диктовка (`voice`)
 
 **Alt+M** / `/voice`: первое нажатие записывает, второе останавливает и
@@ -396,7 +417,8 @@ selection. Инструмент `nvim_context` отдаёт то же модел
     "/home/danil/w/pi-core/extensions/index/index.ts",
     "/home/danil/w/pi-core/extensions/memory/index.ts",
     "/home/danil/w/pi-core/extensions/notify/index.ts",
-    "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts"
+    "/home/danil/w/pi-core/extensions/bash-head-tail/index.ts",
+    "/home/danil/w/pi-core/extensions/checkpoint/index.ts"
   ]}
 ```
 
@@ -423,12 +445,14 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail и Claude-совместимая память (импорт, Markdown/frontmatter, auto-recall).
+bash-head-tail, checkpoint/rewind и Claude-совместимая память (импорт,
+Markdown/frontmatter, auto-recall).
 
 ## Что пока не перенесено
 
-Subagents с изолированным контекстом, plan mode, git-checkpoints для откота
-кода, полноценная межагентная координация (swarm) и hold-to-talk диктовка —
-следующие задачи. `index` и память уже здесь; swarm пока не добавляем.
+Subagents с изолированным контекстом, plan mode, откат изменений через
+`bash`/MCP (checkpoints сейчас только для `edit`/`write`/`propose_change`),
+полноценная межагентная координация (swarm) и hold-to-talk диктовка —
+следующие задачи. `index`, память и checkpoints уже здесь; swarm пока не добавляем.
 
 Происхождение vendored-кода и лицензии: [THIRD_PARTY.md](THIRD_PARTY.md).
