@@ -521,7 +521,7 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
   try {
     const { default: walkthroughPlugin } = await jiti.import("../extensions/walkthrough/index.ts");
     let walkthrough;
-    walkthroughPlugin({ registerTool(definition) { walkthrough = definition; }, sendMessage() {}, registerMessageRenderer() {}, registerCommand() {} });
+    walkthroughPlugin({ registerTool(definition) { walkthrough = definition; }, sendMessage() {}, registerMessageRenderer() {}, registerCommand() {}, events: { emit() {}, on() {} } });
     await walkthrough.execute("w", {
       base: "HEAD",
       stops: [{ title: "First stop", why: "Because the dialog needs it", file: "a.ts", lines: [3, 3] }],

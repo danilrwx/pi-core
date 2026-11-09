@@ -47,6 +47,7 @@ function load() {
     sendMessage(message) { sent.push(message); },
     registerMessageRenderer(type, renderer) { renderers.set(type, renderer); },
     registerCommand() {},
+    events: { emit() {}, on() {} },
   });
   return Object.assign(definition, { sent, renderers });
 }
@@ -311,8 +312,10 @@ test("/story starts a turn that narrates the change set and hands off to Neovim"
   assert.equal(messages.length, 1);
   assert.match(messages[0], /base origin\/main, limited to extensions\//);
   assert.match(messages[0], /Call the `walkthrough` tool with 3-6 stops/);
-  assert.match(messages[0], /ask me ONCE, with the `question` tool/);
-  assert.match(messages[0], /\/tour start opens the same hunks/);
+  assert.match(messages[0], /Stop there\. Do not ask me questions of your own/);
+  assert.doesNotMatch(messages[0], /`question` tool/);
+  assert.match(messages[0], /`\/tour start` opens the same hunks/);
+  assert.match(messages[0], /the review slider opens on these stops/);
   assert.deepEqual(notified, ["Walking through base origin/main, limited to extensions/."]);
 
   await commands.get("story").handler("", { ui: { notify() {} } });

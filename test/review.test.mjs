@@ -54,16 +54,20 @@ function load(pi = {}) {
   const tools = new Map();
   const renderers = new Map();
   const sent = [];
+  const listeners = new Map();
+  const handlers = new Map();
   review({
     registerCommand(name, command) { commands.set(name, command); },
+    events: { on(name, handler) { listeners.set(name, handler); }, emit() {} },
+    _listeners: listeners,
     registerTool(tool) { tools.set(tool.name, tool); },
     registerMessageRenderer(type, renderer) { renderers.set(type, renderer); },
     registerProvider() {},
-    on() {},
+    on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
     sendMessage(message) { sent.push(message); },
     ...pi,
   });
-  return { commands, sent };
+  return { commands, sent, listeners, handlers };
 }
 
 test("the slider moves, refuses the ends and remembers threads per stop", () => {
@@ -183,4 +187,44 @@ test("submit falls back to a deterministic digest when the model is unavailable"
   assert.equal(sent.length, 1);
   assert.match(sent[0].content, /Review of 1 stop against HEAD/);
   assert.match(sent[0].content, /\(the digest could not be written: model exploded\)/);
+});
+
+test("a finished walkthrough opens the review by itself — one command, no extra step", async () => {
+  const { listeners, handlers } = load();
+  const context = fakeContext();
+  for (const handler of handlers.get("session_start") ?? []) await handler({}, context);
+  const onTour = listeners.get("pi-core:tour-ready");
+  assert.equal(typeof onTour, "function", "review listens for the walkthrough");
+
+  onTour({ base: "HEAD~1", stops: [STOP(0), STOP(1), STOP(2)] });
+  assert.equal(reviewState()?.stops.length, 3);
+  assert.equal(reviewState().base, "HEAD~1");
+  assert.match(context._notifications.at(-1)[0], /Review ready: 3 stops/);
+});
+
+test("the last tour is shared even when extensions get separate module instances", async () => {
+  const { createJiti } = await import((await import("./host.mjs")).resolveHost("jiti"));
+  const { pathToFileURL } = await import("node:url");
+  // Pi loads every extension with moduleCache: false, so this file exists twice.
+  const first = createJiti(import.meta.url, { moduleCache: false });
+  const second = createJiti(import.meta.url, { moduleCache: false });
+  const a = await first.import(pathToFileURL(new URL("../extensions/lib/tour-state.ts", import.meta.url).pathname).href);
+  const b = await second.import(pathToFileURL(new URL("../extensions/lib/tour-state.ts", import.meta.url).pathname).href);
+  assert.notEqual(a, b, "two module instances, as in the real loader");
+  a.rememberTour({ base: "HEAD", signature: "1:1:0", stops: [{ ...STOP(0) }] });
+  assert.equal(b.lastTour()?.stops.length, 1, "the registry lives on globalThis, not in the module");
+});
+
+test("the story prompt no longer makes the model ask anything", async () => {
+  const { default: walkthroughPlugin } = await jiti.import("../extensions/walkthrough/index.ts");
+  const commands = new Map();
+  const sent = [];
+  walkthroughPlugin({
+    registerTool() {}, registerMessageRenderer() {}, events: { emit() {}, on() {} },
+    registerCommand(name, command) { commands.set(name, command); },
+    sendUserMessage(content) { sent.push(content); },
+  });
+  await commands.get("story").handler("", { ui: { notify() {} } });
+  assert.doesNotMatch(sent[0], /question` tool/);
+  assert.match(sent[0], /Stop there\. Do not ask me questions of your own/);
 });

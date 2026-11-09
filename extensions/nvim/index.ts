@@ -321,7 +321,7 @@ export default function nvimTour(pi: ExtensionAPI) {
     const finished = current.index === current.stops.length - 1;
     return `${extra}${header(current, stop, shown)}\n${shown.text}\n\n` +
       (finished
-        ? "End of tour. Ask the user once, with the `question` tool, whether the architecture and the direction are right and what to adjust; do not ask about every hunk."
+        ? "End of tour. Stop here; the user drives from now on and asks if something needs explaining."
         : "Explain this stop, then call review_tour action=next. In Neovim the user can also press ]t / [t to move, and <leader>pc to leave a comment. Do not dump the whole diff into chat.");
   }
 
@@ -380,11 +380,11 @@ export default function nvimTour(pi: ExtensionAPI) {
     name: "review_tour",
     label: "Review tour",
     executionMode: "sequential",
-    description: "Review a change set in the user's Neovim. overview opens one snapshot of every changed file/hunk; start walks stops one by one (the user can also navigate in Neovim with ]t/[t and comment with <leader>pc). If Neovim is not connected and Pi runs inside tmux, it opens one automatically. Finish by asking the user with the question tool about architecture and direction, not about every change.",
+    description: "Review a change set in the user's Neovim. overview opens one snapshot of every changed file/hunk; start walks stops one by one (the user can also navigate in Neovim with ]t/[t and comment with <leader>pc). If Neovim is not connected and Pi runs inside tmux, it opens one automatically. It reuses the stops of the walkthrough, so the explanations are already in the editor.",
     promptSnippet: "Tour changed code in Neovim before asking for review",
     promptGuidelines: [
       "After a chunk of work that changed several files or hunks, review the result in Neovim: use action=overview for one snapshot, or action=start to walk stops.",
-      "Ask the user once, with the question tool, about the architecture and the direction of the change set; do not interrogate them about every hunk.",
+      "Do not end a tour with a question of your own: the user walks the stops and asks. A single sentence about how to continue is enough.",
       "Do not paste entire diffs into chat; the tour shows the code in the editor. The user may navigate in Neovim and leave comments that arrive as user messages.",
       "Pass the explanation as `note` as well, so it appears as an annotation next to the hunk in the editor instead of only in the chat.",
     ],
@@ -448,7 +448,7 @@ export default function nvimTour(pi: ExtensionAPI) {
       const base = remote && remote.index > 0 ? remote.index - 1 : current.index;
       const target = base + (params.action === "next" ? 1 : -1);
       if (target < 0 || target >= current.stops.length) {
-        const message = target < 0 ? "Already at the first stop." : "Tour finished. Ask the user with the question tool about the architecture and direction.";
+        const message = target < 0 ? "Already at the first stop." : "Tour finished. Stop here; the user decides what to discuss.";
         return { content: [{ type: "text", text: message }], details: { ...current } };
       }
       const shown = await nvimRequest<NvimResult>({ method: params.action === "next" ? "tour.next" : "tour.prev" });

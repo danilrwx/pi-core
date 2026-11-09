@@ -7,8 +7,10 @@
  * the explanations. The chat tour records itself here, and the editor tour
  * reuses it while the diff it described is still the diff on disk.
  *
- * Module-level, like the dictation registry: the extension modules share one
- * instance per session, so no file or session entry is involved.
+ * Kept on `globalThis`, not in this module: Pi loads every extension with
+ * `moduleCache: false`, so two extensions importing this file get two module
+ * instances. A module-level variable would leave `/review start` blind to the
+ * walkthrough that had just run.
  */
 
 export interface SharedDeletedBlock {
@@ -41,17 +43,25 @@ export function diffSignature(fileCount: number, additions: number, deletions: n
   return `${fileCount}:${additions}:${deletions}`;
 }
 
-let last: SharedTour | undefined;
+interface Registry { last?: SharedTour }
+
+const KEY = Symbol.for("pi-core.tour-state");
+
+function registry(): Registry {
+  const host = globalThis as typeof globalThis & { [KEY]?: Registry };
+  host[KEY] ??= {};
+  return host[KEY];
+}
 
 export function rememberTour(tour: SharedTour): void {
-  last = tour.stops.length ? tour : undefined;
+  registry().last = tour.stops.length ? tour : undefined;
 }
 
 /** The last walkthrough of this session, if it still describes the working tree. */
 export function lastTour(): SharedTour | undefined {
-  return last;
+  return registry().last;
 }
 
 export function forgetTour(): void {
-  last = undefined;
+  registry().last = undefined;
 }

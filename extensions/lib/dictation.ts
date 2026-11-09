@@ -8,7 +8,9 @@
  * editor draft, and the panel data becomes readable through `snapshot()`.
  *
  * Registry instead of a direct import: a consumer that is loaded on its own
- * (`voice` disabled) must not spawn a recorder by touching a module.
+ * (`voice` disabled) must not spawn a recorder by touching a module. The
+ * registry lives on `globalThis`, because Pi loads each extension with
+ * `moduleCache: false` and this file would otherwise exist once per extension.
  */
 
 export type DictationPhase = "idle" | "starting" | "recording" | "transcribing";
@@ -51,12 +53,20 @@ export interface DictationService {
   toggleMute(): void;
 }
 
-let service: DictationService | undefined;
+interface Registry { service?: DictationService }
+
+const KEY = Symbol.for("pi-core.dictation-service");
+
+function registry(): Registry {
+  const host = globalThis as typeof globalThis & { [KEY]?: Registry };
+  host[KEY] ??= {};
+  return host[KEY];
+}
 
 export function setDictationService(next: DictationService | undefined): void {
-  service = next;
+  registry().service = next;
 }
 
 export function getDictationService(): DictationService | undefined {
-  return service;
+  return registry().service;
 }

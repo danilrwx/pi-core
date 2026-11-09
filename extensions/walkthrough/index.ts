@@ -193,9 +193,9 @@ export default function walkthrough(pi: ExtensionAPI) {
         `Present a walkthrough of the current change set (${scope}).`,
         "",
         "1. Call the `walkthrough` tool with 3-6 stops that carry the story: the decision, the tricky part, the risk. Skip formatting, renames and generated files. Write `why` as the reasoning a reviewer cannot read off the code, not as a description of the lines.",
-        "2. Then ask me ONCE, with the `question` tool, whether the architecture and the direction are right and what to adjust. Do not interrogate me about every hunk.",
+        "2. Stop there. Do not ask me questions of your own and do not propose options: the review slider opens on these stops, I walk them with `]t`/`[t` and ask when I want.",
         "",
-        "The stops are remembered, so /tour start opens the same hunks with the same explanations in Neovim, and I can comment there. Keep the stop order meaningful for that.",
+        "The stops are remembered, so `/tour start` opens the same hunks with the same explanations in Neovim. Keep the stop order meaningful for that.",
       ].join("\n"));
       context.ui.notify(`Walking through ${scope}.`, "info");
     },
@@ -209,6 +209,8 @@ export default function walkthrough(pi: ExtensionAPI) {
     promptSnippet: "Narrate a change set in the chat instead of showing a raw diff",
     promptGuidelines: [
       "Use walkthrough after a change set is ready, when the user asked to see what changed or to explain the work; skip it for trivial one-line edits.",
+      "Do not end the walkthrough with a question of your own and do not poll the user: the review slider takes over, and the user decides whether to discuss a stop.",
+      "After the tool returns, stop and let the user read. One sentence about where they can go next is enough.",
       "Pick 3-6 stops that carry the story (the decision, the tricky part, the risk). Skip formatting, renames and generated files.",
       "`why` explains the reasoning and the trade-off a reviewer cannot see from the code; never restate what the line does.",
       "Name `file` plus `hunk` or `lines` when the file has several hunks; the diff itself is read from git.",
@@ -295,6 +297,9 @@ export default function walkthrough(pi: ExtensionAPI) {
       });
 
       await annotateInNvim(ctx.cwd, params.annotate !== false, tourStops);
+      // Hand the stops to review mode so the slider is ready without a second
+      // command: "/story, then work with it".
+      pi.events.emit("pi-core:tour-ready", { base, stops: tour.stops });
 
       pi.sendMessage<WalkthroughBlock>({
         customType: BLOCK_TYPE,

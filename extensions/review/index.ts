@@ -164,6 +164,16 @@ export default function review(pi: ExtensionAPI): void {
     ctx.ui.notify("Review submitted into the conversation.", "info");
   }
 
+  pi.events.on("pi-core:tour-ready", (payload: unknown) => {
+    const data = payload as { base?: string; stops?: ReviewStop[] } | undefined;
+    if (!ctxRef || !data?.stops?.length) return;
+    session = createSession(data.stops.map((stop) => ({ ...stop })), data.base ?? "HEAD");
+    cost = { side: 0 };
+    if (!session) return;
+    renderPanel(ctxRef);
+    ctxRef.ui.notify(`Review ready: ${session.stops.length} stop${session.stops.length === 1 ? "" : "s"} · ]t/[t move · /review ask <question> · /review submit`, "info");
+  });
+
   pi.on("session_start", (_event, ctx) => { ctxRef = ctx; });
   pi.on("session_shutdown", (_event, ctx) => {
     session = undefined;
