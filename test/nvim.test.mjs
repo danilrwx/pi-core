@@ -562,3 +562,27 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a failing start reports the reason and keeps it for status", async () => {
+  const cwd = await repo();
+  const commands = new Map();
+  nvimTour({
+    registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {},
+    registerCommand(name, command) { commands.set(name, command); },
+  });
+  const notified = [];
+  const statuses = [];
+  const context = {
+    cwd, mode: "tui", sessionManager: { getSessionId: () => "fail" },
+    ui: { notify(text, level) { notified.push([text, level]); }, setStatus(key, value) { statuses.push([key, value]); } },
+  };
+  // Unknown base: planning fails deep inside git, and that must reach the user.
+  await commands.get("tour").handler("start --base no-such-ref", context);
+  const failure = notified.at(-1);
+  assert.match(failure[0], /^Tour: /);
+  assert.equal(failure[1], "error");
+  assert.deepEqual(statuses.at(-1), ["tour", "tour failed"]);
+
+  await commands.get("tour").handler("status", context);
+  assert.match(notified.at(-1)[0], /No tour is running\. Last error: Unknown base revision "no-such-ref"/);
+});

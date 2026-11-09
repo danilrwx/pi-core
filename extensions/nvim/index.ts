@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { completeArgs } from "../lib/complete.js";
@@ -95,7 +95,13 @@ export async function planTour(cwd: string, options: { paths?: string[]; base?: 
   const base = options.base ?? await resolveTourBase(cwd);
   const pathArgs = options.paths?.length ? ["--", ...options.paths] : [];
   let hasHead = true;
-  try { await git(cwd, ["rev-parse", "--verify", base]); } catch { hasHead = false; }
+  try { await git(cwd, ["rev-parse", "--verify", base]); }
+  catch {
+    // A base the user named must exist; otherwise the tour would silently show
+    // only untracked files and look broken.
+    if (options.base) throw new Error(`Unknown base revision "${options.base}". Pass a ref that exists, e.g. origin/main or HEAD~1.`);
+    hasHead = false;
+  }
   let hunks = hasHead ? parseDiffHunks(await git(cwd, ["diff", "--unified=0", "--no-color", "--no-ext-diff", base, ...pathArgs])) : [];
   hunks = hunks.filter((hunk) => matches(hunk.file, options.paths));
   const { stops, truncated } = buildStops(hunks, { context: options.context, maxStops: options.maxStops });
@@ -334,6 +340,9 @@ export default function nvimTour(pi: ExtensionAPI) {
         ? "End of tour. Ask the user once, with the `question` tool, whether the architecture and the direction are right and what to adjust; do not ask about every hunk."
         : "Explain this stop, then call review_tour action=next. In Neovim the user can also press ]t / [t to move, and <leader>pc to leave a comment. Do not dump the whole diff into chat.");
   }
+
+  /** Last `/tour` error, so `/tour status` can explain a failed start. */
+  let lastFailure: string | undefined;
 
   let lastReview = { signature: "", at: 0 };
   pi.on("agent_end", async (_event, context) => {
@@ -622,6 +631,21 @@ export default function nvimTour(pi: ExtensionAPI) {
       { start: "walk stops one by one (--base <ref> for committed work)", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
     handler: async (args, context) => {
       ctx = context;
+      // A command that throws leaves the user with nothing to go on, so every
+      // failure is reported with the step that failed.
+      try {
+        await run(args, context);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        lastFailure = message;
+        context.ui.setStatus("tour", "tour failed");
+        context.ui.notify(`Tour: ${message}`, "error");
+      }
+    },
+  });
+
+  async function run(args: string, context: ExtensionCommandContext): Promise<void> {
+    {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       // `--base <ref>` picks what to compare against; the rest are paths.
       let base: string | undefined;
@@ -663,6 +687,7 @@ export default function nvimTour(pi: ExtensionAPI) {
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
         sessions.set(current.sessionId, current);
+        lastFailure = undefined;
         const where = relative(context.cwd, shown.file);
         const data = { index: 1, total: current.stops.length, base: plan.base, file: where, from: shown.from_line, to: shown.to_line };
         recordTour(context, data);
@@ -676,7 +701,14 @@ export default function nvimTour(pi: ExtensionAPI) {
         return;
       }
       const current = state();
-      if (!current) { context.ui.notify(action === "stop" ? "No tour is running." : "No tour is running; /tour start first.", "info"); return; }
+      if (!current) {
+        if (action === "status") {
+          context.ui.notify(`No tour is running.${lastFailure ? ` Last error: ${lastFailure}` : ""}`, "info");
+          return;
+        }
+        context.ui.notify(action === "stop" ? "No tour is running." : "No tour is running; /tour start first.", "info");
+        return;
+      }
       if (action === "stop") {
         sessions.delete(current.sessionId);
         await nvimRequest({ method: "tour.clear" }).catch(() => {});
@@ -686,7 +718,8 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       if (action === "status") {
         const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
-        context.ui.notify(remote?.total ? `Tour ${remote.index || 0}/${remote.total}${remote.file ? ` · ${relative(context.cwd, remote.file)}` : ""}` : "Tour has no stops.", "info");
+        const note = !remote?.total && lastFailure ? ` Last error: ${lastFailure}` : "";
+        context.ui.notify(remote?.total ? `Tour ${remote.index || 0}/${remote.total}${remote.file ? ` · ${relative(context.cwd, remote.file)}` : ""}` : `Tour has no stops.${note}`, "info");
         return;
       }
       if (action !== "next" && action !== "prev") { context.ui.notify("Usage: /tour start|overview|next|prev|status|stop", "info"); return; }
@@ -699,8 +732,8 @@ export default function nvimTour(pi: ExtensionAPI) {
       const where = relative(context.cwd, shown.file);
       recordTour(context, { index: target + 1, total: current.stops.length, base: current.base, file: where, from: shown.from_line, to: shown.to_line });
       context.ui.notify(`Tour ${target + 1}/${current.stops.length} · ${where}:${shown.from_line}-${shown.to_line}`, "info");
-    },
-  });
+    }
+  }
 
   pi.registerCommand("nvim", {
     description: "Neovim bridge: /nvim status | save [file]",
