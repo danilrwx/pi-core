@@ -17,13 +17,41 @@ function lines(memories: Memory[]): string {
 function safeScope(value: unknown): MemoryScope {
   return value === "global" ? "global" : "project";
 }
+function messageText(message: any): string {
+  if (typeof message?.content === "string") return message.content;
+  if (!Array.isArray(message?.content)) return "";
+  return message.content.filter((part: any) => part?.type === "text").map((part: any) => String(part.text ?? "")).join(" ");
+}
+function autoCandidate(text: string): string | undefined {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length < 8 || clean.length > 4000 || clean.startsWith("/")) return;
+  // Only explicit memory requests, never ordinary task instructions.
+  if (!/(?:^|\b)(?:remember|запомни|впредь|from now on|always use|never use|я предпочитаю|i prefer\b)/i.test(clean)) return;
+  return clean;
+}
 
 export default function memory(pi: ExtensionAPI) {
+  let auto = process.env.PI_MEMORY_AUTO !== "0";
   async function search(cwd: string, query: string, scope: ScopeArg, limit = 8): Promise<Memory[]> {
     const memories = await loadAll(cwd);
     const filtered = scope === "all" ? memories : memories.filter((memory) => memory.scope === scope);
     return searchMemories(filtered, query, limit);
   }
+
+  pi.on("agent_settled", async (_event, context) => {
+    if (!auto) return;
+    let candidate: string | undefined;
+    for (const entry of [...context.sessionManager.getBranch()].reverse()) {
+      if (entry.type !== "message" || entry.message.role !== "user") continue;
+      candidate = autoCandidate(messageText(entry.message));
+      break;
+    }
+    if (!candidate) return;
+    try {
+      const result = await addMemory(context.cwd, { text: candidate, type: "feedback", description: candidate.slice(0, 180) });
+      if (!result.duplicate) context.ui.notify(`Remembered: ${candidate.slice(0, 100)}`, "info");
+    } catch { /* Auto-memory must never break the turn. */ }
+  });
 
   pi.on("session_start", async (_event, context) => {
     try {
@@ -100,9 +128,9 @@ export default function memory(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("memory", {
-    description: "Long-term memory: /memory | add <text> | search <query> | forget <id> | clear project|global | import claude",
-    getArgumentCompletions: (prefix) => completeArgs(prefix, ["add", "search", "forget", "clear", "list", "import"], { import: ["claude"] },
-      { add: "store a durable fact (project scope)", search: "find memories", forget: "delete by id", clear: "wipe one scope", list: "list memories", import: "import Claude Code memory" }),
+    description: "Long-term memory: /memory | add <text> | search <query> | forget <id> | clear project|global | import claude | auto on|off",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, ["add", "search", "forget", "clear", "list", "import", "auto"], { import: ["claude"], auto: ["on", "off"] },
+      { add: "store a durable fact (project scope)", search: "find memories", forget: "delete by id", clear: "wipe one scope", list: "list memories", import: "import Claude Code memory", auto: "capture explicit remember requests" }),
     handler: async (args, context) => {
       const [action = "list", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       try {
@@ -111,6 +139,11 @@ export default function memory(pi: ExtensionAPI) {
           if (!text) { context.ui.notify("Usage: /memory add <text>", "info"); return; }
           const result = await addMemory(context.cwd, { text, scope: "project" });
           context.ui.notify(`${result.duplicate ? "Already stored" : "Saved"} ${result.memory.id} (project)`, "info"); return;
+        }
+        if (action === "auto") {
+          const value = rest[0];
+          if (value === "on" || value === "off") { auto = value === "on"; context.ui.notify(`Auto-memory ${value}.`, "info"); return; }
+          context.ui.notify(`Auto-memory: ${auto ? "on" : "off"}. Use /memory auto on|off.`, "info"); return;
         }
         if (action === "import") {
           if (rest[0] !== "claude") { context.ui.notify("Usage: /memory import claude", "info"); return; }

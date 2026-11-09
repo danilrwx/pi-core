@@ -97,3 +97,24 @@ test("importClaude copies Claude project memory once and keeps its type and desc
     if (previous.claude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previous.claude;
   }
 });
+
+test("explicit remember requests are captured automatically", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-memory-auto-"));
+  const previous = process.env.PI_MEMORY_DIR;
+  process.env.PI_MEMORY_DIR = dir;
+  try {
+    const handlers = new Map();
+    plugin.default({ on(name, fn) { handlers.set(name, fn); }, registerTool() {}, registerCommand() {} });
+    const branch = [{ type: "message", message: { role: "user", content: "Remember: always run gofmt before committing" } }];
+    const ctx = { cwd: "/repo/a", sessionManager: { getBranch: () => branch, getSessionId: () => "s" }, ui: { notify() {} } };
+    await handlers.get("agent_settled")({}, ctx);
+    const all = await store.loadAll("/repo/a");
+    assert.equal(all.length, 1);
+    assert.match(all[0].text, /always run gofmt/);
+    assert.equal(all[0].type, "feedback");
+    await handlers.get("agent_settled")({}, ctx);
+    assert.equal((await store.loadAll("/repo/a")).length, 1, "the same request is deduplicated");
+  } finally {
+    if (previous === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous;
+  }
+});

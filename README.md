@@ -79,11 +79,12 @@ Pi уже сохраняет tail stdout/stderr bash при отмене и time
 ### `index` — скелет файла
 
 Инструмент `index` возвращает компактную карту файла: imports, классы, функции,
-методы, типы и приблизительные диапазоны строк. Используется **до** `read`,
-чтобы читать только нужные куски. Поддерживает TS/JS, Python, Go, Rust, Java,
-Kotlin, Ruby, PHP, Lua, shell; для незнакомого языка честно говорит, что
-символы не распознаны. Это эвристика на регулярках, а не tree-sitter, поэтому
-диапазоны best-effort; для точных символов есть `lsp`.
+методы, типы и диапазоны строк. Сначала пробует **LSP documentSymbols** и берёт
+точные диапазоны; если язык-сервер недоступен — откатывается на regex-парсер.
+Используется **до** `read`, чтобы читать только нужные куски. Поддерживает
+TS/JS, Python, Go, Rust, Java, Kotlin, Ruby, PHP, Lua, shell; для незнакомого
+языка честно говорит, что символы не распознаны. В выводе видно `lsp` или
+`regex` — источник скелета.
 
 ### Долговременная память (`memory`)
 
@@ -98,15 +99,23 @@ Kotlin, Ruby, PHP, Lua, shell; для незнакомого языка чест
 
 При старте сессии и по `/memory import claude` расширение читает
 `~/.claude/projects/<slug>/memory/*.md` (или `CLAUDE_CONFIG_DIR`) и импортирует
-их с дедупликацией. Текущая память dotfiles уже перенесена. Хранить секреты
-запрещено правилами инструмента. Никаких remote-запросов и embeddings.
+их с дедупликацией. Текущая память dotfiles уже перенесена.
+
+**Auto-memory:** после `agent_settled` последнее пользовательское сообщение
+проверяется на явные просьбы («remember…», «запомни…», «from now on…»,
+«always use…») и сохраняется как feedback с дедупликацией. Это эвристика без
+вызова модели; `/memory auto on|off|status`, `PI_MEMORY_AUTO=0` выключает.
+Хранить секреты запрещено правилами инструмента. Никаких remote-запросов
+и embeddings.
 
 ### Уведомления (`notify`)
 
 После `agent_settled` (когда pi действительно ждёт ввода, а не после каждого
 низкоуровневого retry) отправляется OSC 99 в Kitty или OSC 777 в остальных
-терминалах. `/notify on|off|status`; `PI_NOTIFY=0` выключает. Это полезно,
-когда агент работает в соседней вкладке tmux.
+терминалах. Отдельные уведомления приходят перед `question` и перед запросом
+прав (permission), через общий needs-input bus. `/notify on|off|status`;
+`PI_NOTIFY=0` выключает. Это полезно, когда агент работает в соседней вкладке
+tmux.
 
 ### AST permissions (`permission/shell-ast.ts`)
 
@@ -448,8 +457,9 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail, checkpoint/rewind и Claude-совместимая память (импорт,
-Markdown/frontmatter, auto-recall).
+bash-head-tail, checkpoint/rewind, LSP-точный index, Claude-совместимая память
+(импорт, Markdown/frontmatter, auto-recall, auto-memory) и needs-input
+уведомления.
 
 ## Что пока не перенесено
 

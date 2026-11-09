@@ -12,3 +12,24 @@ test("notify builds Kitty OSC 99 and generic OSC 777 payloads without control in
   const other = notificationPayload("pi;bad", "Done\x07", {});
   assert.equal(other, "\x1b]777;notify;pi bad;Done\x07");
 });
+
+test("needs-input events send a notification when enabled", async () => {
+  const { default: notify } = await jiti.import("../extensions/notify/index.ts");
+  const { emitNeedsInput } = await jiti.import("../extensions/lib/needs-input.ts");
+  const handlers = new Map();
+  notify({ on(name, fn) { handlers.set(name, fn); }, registerCommand() {} });
+  const previousTTY = process.stdout.isTTY;
+  let written = "";
+  Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+  const originalWrite = process.stdout.write;
+  process.stdout.write = (chunk) => { written += String(chunk); return true; };
+  try {
+    handlers.get("session_start")({}, {});
+    emitNeedsInput({ kind: "question", title: "Question", body: "Pick one" });
+    assert.match(written, /Pick one/);
+  } finally {
+    process.stdout.write = originalWrite;
+    Object.defineProperty(process.stdout, "isTTY", { value: previousTTY, configurable: true });
+    handlers.get("session_shutdown")?.({}, {});
+  }
+});

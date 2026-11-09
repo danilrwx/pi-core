@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 export interface SkeletonSymbol { line: number; end: number; indent: number; kind: string; name: string; signature: string }
-export interface Skeleton { language: string; imports: string[]; symbols: SkeletonSymbol[]; lines: number }
+export interface Skeleton { language: string; imports: string[]; symbols: SkeletonSymbol[]; lines: number; source?: "lsp" | "regex" }
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_SYMBOLS = 150;
@@ -113,6 +113,39 @@ const RULES: Record<string, Rule[]> = {
   ],
 };
 
+const LSP_KINDS: Record<number, string> = {
+  2: "module", 3: "namespace", 4: "package", 5: "class", 6: "method", 7: "property",
+  8: "field", 9: "constructor", 10: "enum", 11: "interface", 12: "function",
+  13: "variable", 14: "constant", 22: "enum member", 23: "struct", 24: "event",
+  25: "operator", 26: "type parameter",
+};
+
+/** Convert LSP DocumentSymbols (exact ranges) to the same compact shape as the regex fallback. */
+export function fromLspSymbols(symbols: any[], file: string, text: string): Skeleton | undefined {
+  if (!symbols.length) return;
+  const lines = text.split(/\r?\n/);
+  const result: SkeletonSymbol[] = [];
+  const visit = (symbolsToVisit: any[], depth: number) => {
+    for (const symbol of symbolsToVisit) {
+      if (!symbol?.name || !symbol.range?.start || !symbol.range?.end) continue;
+      const start = symbol.range.start.line;
+      const end = symbol.range.end;
+      const endLine = end.line + (end.character > 0 ? 1 : 0);
+      const signature = (lines[start] ?? "").trim().replace(/\s+/g, " ").slice(0, 160);
+      result.push({
+        line: start + 1, end: Math.max(start + 1, Math.min(endLine, lines.length)), indent: depth * 2,
+        kind: LSP_KINDS[symbol.kind as number] ?? "symbol", name: String(symbol.name), signature,
+      });
+      if (Array.isArray(symbol.children)) visit(symbol.children, depth + 1);
+      if (result.length >= MAX_SYMBOLS * 2) return;
+    }
+  };
+  visit(symbols, 0);
+  if (!result.length) return;
+  result.sort((a, b) => a.line - b.line || a.indent - b.indent);
+  return { language: languageOf(file), imports: importLines(lines, languageOf(file)), symbols: result.slice(0, MAX_SYMBOLS), lines: lines.length, source: "lsp" };
+}
+
 function importLines(lines: string[], language: string): string[] {
   const found: string[] = [];
   const patterns = language === "python"
@@ -154,11 +187,11 @@ export function skeleton(text: string, file: string, options: { maxSymbols?: num
     if (seen.has(key)) return false;
     seen.add(key); return true;
   }).sort((a, b) => a.line - b.line).slice(0, options.maxSymbols ?? MAX_SYMBOLS);
-  return { language, imports: importLines(lines, language), symbols: unique, lines: lines.length };
+  return { language, imports: importLines(lines, language), symbols: unique, lines: lines.length, source: "regex" };
 }
 
 export function formatSkeleton(file: string, sk: Skeleton, cwd: string): string {
-  const out = [`${relative(cwd, file) || file} · ${sk.language} · ${sk.lines} lines`];
+  const out = [`${relative(cwd, file) || file} · ${sk.language} · ${sk.lines} lines · ${sk.source ?? "regex"}`];
   if (sk.imports.length) out.push("imports:", ...sk.imports.map((line) => `  ${line}`));
   if (sk.symbols.length) out.push("symbols:", ...sk.symbols.map((symbol) => {
     const depth = Math.min(4, Math.round(symbol.indent / 2));
@@ -168,12 +201,24 @@ export function formatSkeleton(file: string, sk: Skeleton, cwd: string): string 
   return out.join("\n");
 }
 
+async function lspSkeleton(cwd: string, file: string, text: string): Promise<Skeleton | undefined> {
+  try {
+    const { getOrCreateManager } = await import("../lsp-pi/lsp-core.js");
+    const manager = getOrCreateManager(cwd);
+    const symbols = await Promise.race([
+      manager.getDocumentSymbols(file),
+      new Promise<any[]>((resolve) => { const timer = setTimeout(() => resolve([]), 8_000); timer.unref(); }),
+    ]);
+    return fromLspSymbols(symbols, file, text);
+  } catch { return; }
+}
+
 export default function skeletonExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "index",
     label: "Index file",
     readOnly: true,
-    description: "Return a compact skeleton of a source file: imports, declarations, methods and exact line ranges, without file bodies. Use it before read to find the ranges worth reading. Ranges are best-effort for brace/indent languages.",
+    description: "Return a compact skeleton of a source file: imports, declarations, methods and line ranges, without file bodies. Uses the language server for exact ranges when available, then falls back to a regex parser. Use it before read to find the ranges worth reading.",
     promptSnippet: "Index a file before reading it to save context",
     promptGuidelines: [
       "For an unfamiliar or large source file, call index before read; then read only the relevant line ranges.",
@@ -191,7 +236,8 @@ export default function skeletonExtension(pi: ExtensionAPI) {
         if (data.length > MAX_BYTES) throw new Error(`File is larger than ${MAX_BYTES / 1024 / 1024} MiB; use read with ranges`);
         const text = data.toString("utf8");
         if (text.includes("\0")) throw new Error("Binary file; use read for supported images or a hex tool");
-        let sk = skeleton(text, file, { maxSymbols: params.max_symbols });
+        let sk = await lspSkeleton(context.cwd, file, text) ?? skeleton(text, file, { maxSymbols: params.max_symbols });
+        if (params.max_symbols) sk = { ...sk, symbols: sk.symbols.slice(0, params.max_symbols) };
         if (params.query?.trim()) {
           const needle = params.query.trim().toLowerCase();
           sk = { ...sk, symbols: sk.symbols.filter((symbol) => `${symbol.name} ${symbol.signature}`.toLowerCase().includes(needle)) };

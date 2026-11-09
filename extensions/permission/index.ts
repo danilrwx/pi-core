@@ -42,6 +42,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SHELL_PERMISSION_EVENT, type ShellPermissionRequest } from "../lib/shell-permission.js";
+import { emitNeedsInput } from "../lib/needs-input.js";
 import { classifyShellCommand } from "./shell-ast.js";
 import { completeArgs } from "../lib/complete.js";
 import {
@@ -455,6 +456,7 @@ Use /permission-mode ask to enable confirmations.`,
     }
 
     playPermissionSound();
+    emitNeedsInput({ kind: "permission", title: "Permission", body: `Dangerous command: ${command}` });
     const choice = await ctx.ui.select(`${UI_TEXT.dangerousIcon} Dangerous command`, [UI_TEXT.allowOnce, UI_TEXT.cancel]);
 
     if (choice !== UI_TEXT.allowOnce) {
@@ -490,6 +492,7 @@ Use /permission ${requiredLevel} or /permission-mode ask to enable prompts.`,
   }
 
   playPermissionSound();
+  emitNeedsInput({ kind: "permission", title: "Permission", body: `Needs ${requiredInfo.label}: ${command}` });
   const choice = await ctx.ui.select(formatPermissionPrompt(requiredInfo.label, command), [
     UI_TEXT.allowOnce,
     `Allow all (${requiredInfo.label})`,
@@ -545,6 +548,7 @@ Use /permission low or /permission-mode ask to enable prompts.`,
   }
 
   playPermissionSound();
+  emitNeedsInput({ kind: "permission", title: "Permission", body: `${action}: ${filePath}` });
   const choice = await ctx.ui.select(message, [UI_TEXT.allowOnce, "Allow all (Low)", UI_TEXT.cancel]);
 
   if (choice === UI_TEXT.allowOnce) return undefined;

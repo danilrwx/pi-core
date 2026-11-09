@@ -3,6 +3,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { createQuestionForm } from "./form.js";
 import { buildContent, normalizeQuestions, type Question, type QuestionResult } from "./normalize.js";
+import { emitNeedsInput } from "../lib/needs-input.js";
 
 const PARAMETERS = Type.Object({
   questions: Type.Array(Type.Object({
@@ -41,6 +42,7 @@ export default function question(pi: ExtensionAPI) {
       if (ctx.mode !== "tui") {
         return errorResult("Error: question UI needs the interactive terminal; ask the user in plain text instead.", questions);
       }
+      emitNeedsInput({ kind: "question", title: "Question", body: questions[0]?.question ?? "The agent is waiting for your answer" });
       const result = await ctx.ui.custom<QuestionResult>(
         (tui, theme, _keybindings, done) => createQuestionForm(tui, theme, questions, done),
         { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%", minWidth: 50, anchor: "center", margin: 2 } },

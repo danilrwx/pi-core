@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { completeArgs } from "../lib/complete.js";
+import { needsInput, type NeedsInput } from "../lib/needs-input.js";
 
 type Kind = "kitty" | "osc777" | "none";
 
@@ -20,6 +21,7 @@ export function notificationPayload(title: string, body: string, env: NodeJS.Pro
 
 export default function notify(pi: ExtensionAPI) {
   let enabled = process.env.PI_NOTIFY !== "0";
+  let listener: ((event: NeedsInput) => void) | undefined;
 
   const send = (title: string, body: string) => {
     if (!enabled || !process.stdout.isTTY) return;
@@ -27,6 +29,14 @@ export default function notify(pi: ExtensionAPI) {
     if (payload) process.stdout.write(payload);
   };
 
+  pi.on("session_start", () => {
+    listener = (event) => { if (enabled) send("pi", `${event.body ?? event.title}`); };
+    needsInput.on("needs-input", listener);
+  });
+  pi.on("session_shutdown", () => {
+    if (listener) needsInput.off("needs-input", listener);
+    listener = undefined;
+  });
   pi.on("agent_settled", () => {
     if (!enabled) return;
     send("pi", "Ready for input");
