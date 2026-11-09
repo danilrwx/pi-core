@@ -30,3 +30,38 @@ test("tree-sitter extracts symbols for every major language", async () => {
     }
   }
 });
+
+test("tree-sitter outlines markup and config files", async () => {
+  const json = await treeSitterSkeleton(`{\n  "name": "x",\n  "scripts": { "build": "tsc" },\n  "dependencies": ["a"]\n}`, "/repo/a.json");
+  assert.deepEqual((json.symbols ?? []).map((s) => s.name), ["name", "scripts", "dependencies"]);
+
+  const html = await treeSitterSkeleton(`<html><body><div id="app" class="main"><p>hi</p></div></body></html>`, "/repo/a.html");
+  assert.ok(html.symbols.some((s) => s.kind === "element" && s.name === "div#app.main"));
+
+  const css = await treeSitterSkeleton(`.card { color: red; }\n@media (max-width: 600px) { .a {} }`, "/repo/a.css");
+  assert.ok(css.symbols.some((s) => s.kind === "rule" && s.name === ".card"));
+  assert.ok(css.symbols.some((s) => s.kind === "media"));
+
+  const toml = await treeSitterSkeleton(`[package]\nname = "x"\n[[bin]]\nname = "pi"`, "/repo/a.toml");
+  assert.ok(toml.symbols.some((s) => s.kind === "section" && s.name === "package"));
+
+  const vue = await treeSitterSkeleton(`<template><div class="app"></div></template>\n<script lang="ts">export default {}</script>`, "/repo/a.vue");
+  assert.ok(vue.symbols.some((s) => s.kind === "element" && s.name === "div.app"));
+  assert.ok(vue.symbols.some((s) => s.kind === "script"));
+});
+
+test("yaml uses tree-sitter; helm falls back to the template-aware extractor", async () => {
+  const yaml = await treeSitterSkeleton(`apiVersion: v1\nmetadata:\n  name: x\nspec:\n  replicas: 3\n`, "/repo/a.yaml");
+  assert.equal(yaml.source, "tree-sitter");
+  assert.ok(yaml.symbols.some((s) => s.kind === "key" && s.name === "replicas"));
+
+  const helm = await treeSitterSkeleton(`apiVersion: v1\nmetadata:\n  name: {{ .Release.Name }}\n`, "/repo/a.yaml");
+  assert.equal(helm, undefined, "go-template yaml must not parse as plain yaml");
+  const { markupSkeleton } = await jiti.import("../extensions/index/index.ts");
+  const outline = markupSkeleton(`apiVersion: v1\nkind: Deployment\nmetadata:\n  name: {{ .Release.Name }}\n{{- with .Values.image }}\n  image: {{ .name }}\n{{- end }}\n`, "/repo/a.yaml");
+  assert.equal(outline.source, "regex");
+  assert.deepEqual((outline.symbols ?? []).map((s) => s.name), ["apiVersion", "kind", "metadata", "name", "image"]);
+
+  const tpl = markupSkeleton(`{{- define "app.fullname" -}}\n{{- end }}\n{{- define "app.labels" -}}\n{{- end }}\n`, "/repo/helpers.tpl");
+  assert.deepEqual((tpl.symbols ?? []).filter((s) => s.kind === "define").map((s) => s.name), ["app.fullname", "app.labels"]);
+});

@@ -34,6 +34,10 @@ const EXT_LANGUAGES: Record<string, string> = {
   ".scala": "scala", ".sc": "scala", ".zig": "zig", ".dart": "dart",
   ".ex": "elixir", ".exs": "elixir",
   ".vue": "vue", ".svelte": "svelte",
+  ".json": "json", ".html": "html", ".htm": "html",
+  ".css": "css", ".toml": "toml",
+  ".yaml": "yaml", ".yml": "yaml", ".tpl": "helm",
+  ".md": "markdown", ".markdown": "markdown",
 };
 
 export function languageOf(file: string): string {
@@ -46,6 +50,7 @@ const TS_GRAMMARS: Record<string, string> = {
   go: "go", typescript: "typescript", tsx: "tsx", javascript: "javascript",
   rust: "rust", python: "python", java: "java", kotlin: "kotlin", ruby: "ruby",
   php: "php", lua: "lua", dart: "dart", swift: "swift",
+  json: "json", html: "html", css: "css", toml: "toml", vue: "vue", yaml: "yaml",
 };
 
 /** tree-sitter node type → symbol kind, for declarations whose name is the `name` field. */
@@ -237,6 +242,25 @@ function swiftKind(node: Node): string {
 
 interface Declaration { kind: string; name: string }
 
+function attributeValue(startTag: Node, name: string): string | undefined {
+  for (const attr of startTag.namedChildren) {
+    if (!attr || attr.type !== "attribute") continue;
+    if (findChild(attr, "attribute_name")?.text !== name) continue;
+    const quoted = findChild(attr, "quoted_attribute_value");
+    return quoted?.namedChildren[0]?.text ?? quoted?.text.replace(/^["']|["']$/g, "");
+  }
+  return;
+}
+
+function markupElementName(node: Node): string | undefined {
+  const start = findChild(node, "start_tag");
+  const tagName = start ? findChild(start, "tag_name")?.text : undefined;
+  if (!tagName) return;
+  const id = start ? attributeValue(start, "id") : undefined;
+  const cls = start ? attributeValue(start, "class") : undefined;
+  return `${tagName}${id ? `#${id}` : ""}${cls ? `.${cls.split(/\s+/)[0]}` : ""}`;
+}
+
 function elixirDeclaration(node: Node): Declaration | undefined {
   if (node.type !== "call") return;
   const head = node.namedChildren[0];
@@ -272,6 +296,54 @@ function describe(node: Node, language: string): Declaration | undefined {
   if (language === "ruby" && type === "assignment") {
     const left = node.namedChildren[0];
     if (left?.type === "constant") return { kind: "constant", name: compact(left.text) };
+  }
+
+  // Markup and config formats: the structure, not the bodies, is what matters.
+  if (language === "json" && type === "pair") {
+    const parent = node.parent;
+    if (parent?.type !== "object" || parent.parent?.type !== "document") return;
+    const content = node.namedChildren[0]?.namedChildren[0];
+    if (!content?.text.trim()) return;
+    return { kind: "key", name: content.text.trim() };
+  }
+  if (language === "html" || language === "vue") {
+    if (type === "element") {
+      const name = markupElementName(node);
+      if (name) return { kind: "element", name };
+    }
+    if (language === "vue" && (type === "script_element" || type === "style_element")) {
+      const tag = type === "script_element" ? "script" : "style";
+      const start = findChild(node, "start_tag");
+      const lang = start ? attributeValue(start, "lang") : undefined;
+      return { kind: tag, name: lang ? `${tag} (${lang})` : tag };
+    }
+    return;
+  }
+  if (language === "css") {
+    if (type === "rule_set") {
+      const selectors = findChild(node, "selectors");
+      return selectors?.text.trim() ? { kind: "rule", name: compact(selectors.text) } : undefined;
+    }
+    if (type === "media_statement") {
+      const query = findChild(node, "feature_query") ?? findChild(node, "media_query");
+      return { kind: "media", name: query ? compact(query.text) : "media" };
+    }
+  }
+  if (language === "yaml") {
+    if (type === "block_mapping_pair" || type === "flow_pair") {
+      const key = node.childForFieldName("key")?.text;
+      if (key?.trim()) return { kind: "key", name: compact(key) };
+    }
+  }
+  if (language === "toml") {
+    if (type === "table" || type === "table_array_element") {
+      const key = findChild(node, "bare_key") ?? findChild(node, "dotted_key");
+      return key?.text.trim() ? { kind: "section", name: compact(key.text) } : undefined;
+    }
+    if (type === "pair") {
+      const key = node.namedChildren[0];
+      return key?.text.trim() ? { kind: "key", name: compact(key.text) } : undefined;
+    }
   }
 
   let kind = DECLARATIONS[language]?.[type];
@@ -341,6 +413,7 @@ function importLines(lines: string[], language: string): string[] {
 
 export async function treeSitterSkeleton(text: string, file: string): Promise<Skeleton | undefined> {
   const languageName = languageOf(file);
+  if (languageName === "yaml" && /{{/.test(text)) return; // Helm templates are Go-flavoured; use the regex extractor.
   const grammar = TS_GRAMMARS[languageName];
   if (!grammar) return;
   const parser = await tsParser(grammar);
@@ -390,3 +463,66 @@ export async function treeSitterSkeleton(text: string, file: string): Promise<Sk
 }
 
 export { importLines };
+
+/**
+ * Regex outline for YAML and Helm, used when tree-sitter is unavailable or the
+ * file carries Go templates (`{{ ... }}`) that the YAML grammar cannot parse.
+ * YAML keys are extracted by indentation; template directive lines are skipped
+ * and inline actions are stripped so a key like `name: {{ .Release.Name }}`
+ * still yields `name`. Helm `.tpl` files additionally report `define` names.
+ */
+export function markupSkeleton(text: string, file: string): Skeleton | undefined {
+  const language = languageOf(file);
+  if (language !== "yaml" && language !== "helm") return;
+  const lines = text.split(/\r?\n/);
+  const symbols: SkeletonSymbol[] = [];
+  const seen = new Set<string>();
+
+  const isDirective = (line: string) => /^\s*{{[-]?/.test(line);
+  const strip = (line: string) => line.replace(/{{[-]?[^}]*[-]?}}/g, "").trim();
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (!raw.trim() || /^\s*#/.test(raw)) continue;
+
+    if (language === "helm") {
+      const define = /{{-?\s*(?:define|template)\s+"([^"]+)"/.exec(raw);
+      if (define) {
+        const key = `define:${i}:${define[1]}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          symbols.push({ line: i + 1, end: i + 1, indent: 0, kind: "define", name: define[1], signature: compact(raw) });
+        }
+      }
+    }
+
+    if (isDirective(raw)) continue; // {{- with ... }}, {{ end }}, {{- end }}
+    const clean = strip(raw);
+    if (!clean) continue;
+    const match = /^(\s*)([A-Za-z0-9_.-]+)\s*:(?:\s+.*)?$/.exec(clean);
+    if (!match) continue;
+    const indent = (match[1] ?? "").length;
+    const name = match[2];
+    const key = `${indent}:${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    symbols.push({ line: i + 1, end: yamlEnd(lines, i, indent), indent, kind: "key", name, signature: compact(raw) });
+  }
+
+  if (!symbols.length) return;
+  symbols.sort((a, b) => a.line - b.line);
+  return { language, imports: [], symbols: symbols.slice(0, MAX_SYMBOLS * 2), lines: lines.length, source: "regex" };
+}
+
+function yamlEnd(lines: string[], start: number, indent: number): number {
+  let end = start + 1;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || /^\s*#/.test(line) || /^\s*{{[-]?/.test(line)) continue;
+    const current = (line.match(/^\s*/) ?? [""])[0].length;
+    if (current <= indent) break;
+    end = i + 1;
+  }
+  return end;
+}
+

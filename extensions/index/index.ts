@@ -6,12 +6,13 @@ import {
   MAX_SYMBOLS,
   importLines,
   languageOf,
+  markupSkeleton,
   treeSitterSkeleton,
   type Skeleton,
   type SkeletonSymbol,
 } from "./tree-sitter.js";
 
-export { languageOf, treeSitterSkeleton, MAX_SYMBOLS };
+export { languageOf, markupSkeleton, treeSitterSkeleton, MAX_SYMBOLS };
 export type { Skeleton, SkeletonSymbol };
 
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -101,6 +102,12 @@ const RULES: Record<string, Rule[]> = {
   ],
   shell: [
     { kind: "function", re: /^\s*(?:function\s+)?([\w-]+)\s*\(\)\s*\{?/, name: 1 },
+  ],
+  yaml: [
+    { kind: "key", re: /^([A-Za-z0-9_.-]+)\s*:/, name: 1 },
+  ],
+  markdown: [
+    { kind: "heading", re: /^(#{1,6})\s+(.+)$/, name: 2 },
   ],
 };
 
@@ -193,7 +200,7 @@ export default function skeletonExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "index",
     label: "Index file",
-    description: "Return a compact skeleton of a source file: imports, declarations, methods and line ranges, without file bodies. Uses tree-sitter when a grammar is available, then the language server, then a regex parser. Use it before read to find the ranges worth reading.",
+    description: "Return a compact skeleton of a source file: imports, declarations, methods, elements and line ranges, without file bodies. Uses tree-sitter when a grammar is available, then the language server, then a regex parser. Use it before read to find the ranges worth reading.",
     promptSnippet: "Index a file before reading it to save context",
     promptGuidelines: [
       "For an unfamiliar or large source file, call index before read; then read only the relevant line ranges.",
@@ -212,6 +219,7 @@ export default function skeletonExtension(pi: ExtensionAPI) {
         const text = data.toString("utf8");
         if (text.includes("\0")) throw new Error("Binary file; use read for supported images or a hex tool");
         let sk = await treeSitterSkeleton(text, file)
+          ?? markupSkeleton(text, file)
           ?? await lspSkeleton(context.cwd, file, text)
           ?? skeleton(text, file, { maxSymbols: params.max_symbols });
         if (params.max_symbols) sk = { ...sk, symbols: sk.symbols.slice(0, params.max_symbols) };
