@@ -1,6 +1,22 @@
 local M = {}
 local ns = vim.api.nvim_create_namespace("pi_tour")
 local ns_comments = vim.api.nvim_create_namespace("pi_comments")
+--- Annotations pushed by the chat tour; separate so they do not disturb the
+--- tour marks and can be cleared on their own.
+local ns_annot = vim.api.nvim_create_namespace("pi_annot")
+
+--- Wrap text to the window width, keeping words whole.
+local function wrap(text, width)
+  local lines, current = {}, ""
+  for word in tostring(text):gmatch("%S+") do
+    if current == "" then current = word
+    elseif #current + 1 + #word <= width then current = current .. " " .. word
+    else lines[#lines + 1] = current; current = word end
+  end
+  if current ~= "" then lines[#lines + 1] = current end
+  return lines
+end
+
 local limit = 32768
 local show
 local diffs = {}
@@ -258,10 +274,12 @@ function M.comment_visual()
   comment(vim.fn.input("Pi comment (range): "), first, last)
 end
 
-function M.show_stop(stop)
+function M.show_stop(stop, index)
+  local position = index or (M.tour and M.tour.index) or 0
   return show({
     method = "show", file = stop.file, from_line = stop.expandedFrom, to_line = stop.expandedTo,
     root = M.tour and M.tour.root or nil, mode = "diff", added = stop.added, deleted_blocks = stop.deleted,
+    note = stop.note, index = position, total = M.tour and #M.tour.stops or 0,
   })
 end
 
@@ -271,7 +289,7 @@ function M.tour_step(delta)
   local index = math.max(1, math.min(#M.tour.stops, M.tour.index + delta))
   M.tour.index = index
   state.tour = M.tour
-  local shown = M.show_stop(M.tour.stops[index])
+  local shown = M.show_stop(M.tour.stops[index], index)
   notify(("Pi tour %d/%d · %s:%d-%d"):format(index, #M.tour.stops,
     vim.fn.fnamemodify(shown.file, ":t"), shown.from_line, shown.to_line))
   return shown
@@ -392,6 +410,56 @@ return M.tour_step(1) end
       tour = state.tour and { index = state.tour.index, total = #state.tour.stops } or nil,
     }
   end
+  if request.method == "annotate" then
+    -- Annotations for the chat tour: only files the user already has open, so
+    -- nothing is opened or stolen behind their back.
+    local file = allowed(request.file, request.root)
+    local buf = vim.fn.bufnr(file)
+    if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then
+      return { annotated = 0, skipped = "buffer is not open" }
+    end
+    vim.api.nvim_buf_clear_namespace(buf, ns_annot, 0, -1)
+    local count = vim.api.nvim_buf_line_count(buf)
+    local annotated = 0
+    for _, item in ipairs(request.items or {}) do
+      local row = tonumber(item.from_line)
+      if row and row >= 1 and row <= count then
+        local lines = {}
+        if item.header then
+          for _, line in ipairs(wrap(item.header, math.max(24, vim.o.columns - 8))) do
+            lines[#lines + 1] = { { "▸ " .. line, "DiagnosticInfo" } }
+          end
+        end
+        for _, line in ipairs(wrap(item.text or "", math.max(24, vim.o.columns - 8))) do
+          lines[#lines + 1] = { { "  " .. line, "Comment" } }
+        end
+        if #lines > 0 then
+          vim.api.nvim_buf_set_extmark(buf, ns_annot, row - 1, 0, { virt_lines = lines, virt_lines_above = true })
+          annotated = annotated + 1
+        end
+      end
+    end
+    return { annotated = annotated }
+  end
+
+  if request.method == "tour.note" then
+    -- The agent explains a stop after showing it; keep the text on the stop so
+    -- ]t/[t brings the annotation back, and repaint when it is the current one.
+    local tour = state.tour
+    if not tour or not tour.stops then error("No Pi tour is installed") end
+    local index = tonumber(request.index) or 0
+    local stop = tour.stops[index]
+    if not stop then error("Unknown tour stop " .. tostring(request.index)) end
+    stop.note = tostring(request.text or ""):sub(1, 2000)
+    M.tour = tour
+    local current = tour.index == index
+    if current then
+      local shown = M.show_stop(stop, index)
+      return { index = index, shown = shown, rendered = true }
+    end
+    return { index = index, rendered = false }
+  end
+
   if request.method == "snapshot" then
     local lines = request.lines
     if type(lines) ~= "table" or #lines == 0 then error("Snapshot needs lines") end
@@ -506,6 +574,25 @@ return M.tour_step(1) end
   error("Unknown tour operation")
 end
 
+--- The annotation in the buffer: position and counts on the first line, then
+--- the explanation the agent attached to this stop.
+local function annotation_lines(request, columns)
+  local width = math.max(24, (tonumber(columns) or 80) - 8)
+  local head = {}
+  if request.index and request.total and request.total > 0 then
+    head[#head + 1] = ("%d/%d"):format(request.index, request.total)
+  end
+  if request.added and #request.added > 0 then head[#head + 1] = ("+%d"):format(#request.added) end
+  local removed = 0
+  for _, block in ipairs(request.deleted_blocks or {}) do removed = removed + #(block.lines or {}) end
+  if removed > 0 then head[#head + 1] = ("-%d"):format(removed) end
+  local lines = { { { "▸ " .. table.concat(head, " · "), "DiagnosticInfo" } } }
+  for _, line in ipairs(wrap(request.note or "", width - 2)) do
+    lines[#lines + 1] = { { "  " .. line, "Comment" } }
+  end
+  return lines
+end
+
 show = function(request)
   local file = allowed(request.file, request.root)
   local first, last = request.from_line, request.to_line
@@ -526,6 +613,13 @@ show = function(request)
     if vim.api.nvim_buf_is_loaded(loaded) then
       vim.api.nvim_buf_clear_namespace(loaded, ns, 0, -1)
     end
+  end
+  if request.mode == "diff" and (request.note or request.index) then
+    local annotation = annotation_lines(request, vim.o.columns)
+    vim.api.nvim_buf_set_extmark(buf, ns, first - 1, 0, {
+      virt_lines = annotation,
+      virt_lines_above = true,
+    })
   end
   if request.mode == "diff" then
     for _, value in ipairs(request.added or {}) do

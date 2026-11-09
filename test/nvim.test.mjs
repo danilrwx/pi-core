@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -371,5 +371,47 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
   } finally {
     if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+  }
+});
+
+test("review_tour stores the explanation as an annotation on the stop", async () => {
+  const cwd = await repo();
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-tour-note-"));
+  const log = join(dir, "requests.log");
+  const bin = join(dir, "fake-nvim");
+  await writeFile(bin, `#!${process.execPath}
+const fs = require("node:fs");
+const req = JSON.parse(process.env.PI_TOUR_REQUEST);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(req) + "\\n");
+const stops = [{ expandedFrom: 1, expandedTo: 6 }, { expandedFrom: 20, expandedTo: 26 }];
+let result = { connected: true };
+if (req.method === "install") result = { installed: true };
+else if (req.method === "tour.next" || req.method === "tour.prev") {
+  const index = req.method === "tour.next" ? 1 : 0;
+  result = { file: "a.ts", from_line: stops[index].expandedFrom, to_line: stops[index].expandedTo, text: "shown" };
+} else if (req.method === "tour.note") result = { index: req.index, rendered: true };
+process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
+`);
+  execFileSync("chmod", ["755", bin]);
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
+  process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-fake-note.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
+  const tools = new Map();
+  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {} });
+  const tool = tools.get("review_tour");
+  const context = { cwd, mode: "tui", sessionManager: { getSessionId: () => "note-test" } };
+  try {
+    await tool.execute("t", { action: "start", context: 1, note: "Why the first stop exists" }, undefined, undefined, context);
+    await tool.execute("t", { action: "next", note: "Why the second stop exists" }, undefined, undefined, context);
+    await tool.execute("t", { action: "next" }, undefined, undefined, context);
+    const notes = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((req) => req.method === "tour.note");
+    assert.deepEqual(notes.map((req) => [req.index, req.text]), [
+      [1, "Why the first stop exists"],
+      [2, "Why the second stop exists"],
+    ], "a note is only sent when the call carries one");
+  } finally {
+    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
+    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+    await rm(dir, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -256,5 +256,42 @@ test("an empty change set says so instead of rendering an empty tour", async () 
     assert.match(clean.content[0].text, /no changes against HEAD/);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("walkthrough mirrors the explanations into open Neovim buffers", async () => {
+  const { dir } = await repo({ "app.js": "one\ntwo\nthree\n" });
+  const binDir = await mkdtemp(join(tmpdir(), "pi-core-walk-nvim-"));
+  const log = join(binDir, "requests.log");
+  const bin = join(binDir, "fake-nvim");
+  await writeFile(bin, `#!${process.execPath}
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(JSON.parse(process.env.PI_TOUR_REQUEST)) + "\\n");
+process.stdout.write(JSON.stringify({ ok: true, result: { annotated: 1 } }) + "\\n");
+`);
+  await chmod(bin, 0o755);
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
+  process.env.PI_NVIM_SOCKET = "/tmp/pi-walk-annot.sock";
+  process.env.PI_TOUR_NVIM_BIN = bin;
+  try {
+    await writeFile(join(dir, "app.js"), "one\nTWO\nthree\n");
+    const definition = load();
+    await definition.execute("id", {
+      stops: [{ title: "Rename the constant", why: "The dialog needs it", file: "app.js", lines: [2, 2] }],
+    }, undefined, undefined, { cwd: dir });
+    const requests = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, "annotate");
+    assert.equal(requests[0].file, "app.js");
+    assert.deepEqual(requests[0].items, [{ from_line: 2, header: "Rename the constant", text: "The dialog needs it" }]);
+
+    await writeFile(log, "");
+    await definition.execute("id", { annotate: false, stops: [{ title: "x", why: "y", file: "app.js", lines: [2, 2] }] }, undefined, undefined, { cwd: dir });
+    assert.equal((await readFile(log, "utf8")).trim(), "", "annotate:false must not talk to Neovim");
+  } finally {
+    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
+    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+    await rm(dir, { recursive: true, force: true });
+    await rm(binDir, { recursive: true, force: true });
   }
 });

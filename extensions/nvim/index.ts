@@ -241,6 +241,12 @@ export default function nvimTour(pi: ExtensionAPI) {
       stops: stops?.map((stop) => ({ ...stop, file: isAbsolute(stop.file) ? stop.file : join(context.cwd, stop.file) })),
     });
   }
+  /** Store the explanation on the stop so the editor shows it as an annotation. */
+  async function annotate(index: number, note: string | undefined): Promise<void> {
+    if (!note?.trim()) return;
+    await nvimRequest({ method: "tour.note", index, text: note.trim() }, 5_000).catch(() => {});
+  }
+
   async function shownContent(context: ExtensionContext, current: TourState, shown: NvimResult, stop: TourStop, extra = ""): Promise<string> {
     const finished = current.index === current.stops.length - 1;
     return `${extra}${header(current, stop, shown)}\n${shown.text}\n\n` +
@@ -307,12 +313,14 @@ export default function nvimTour(pi: ExtensionAPI) {
       "After a chunk of work that changed several files or hunks, review the result in Neovim: use action=overview for one snapshot, or action=start to walk stops.",
       "Ask the user once, with the question tool, about the architecture and the direction of the change set; do not interrogate them about every hunk.",
       "Do not paste entire diffs into chat; the tour shows the code in the editor. The user may navigate in Neovim and leave comments that arrive as user messages.",
+      "Pass the explanation as `note` as well, so it appears as an annotation next to the hunk in the editor instead of only in the chat.",
     ],
     parameters: Type.Object({
       action: Type.Union([Type.Literal("start"), Type.Literal("overview"), Type.Literal("next"), Type.Literal("prev"), Type.Literal("status"), Type.Literal("stop")]),
       paths: Type.Optional(Type.Array(Type.String({ description: "Limit the tour to these paths" }))),
       base: Type.Optional(Type.String({ description: "Git base to diff against (default HEAD)" })),
       context: Type.Optional(Type.Number({ minimum: 0, maximum: 20, description: "Context lines around each hunk (default 6)" })),
+      note: Type.Optional(Type.String({ description: "One or two sentences shown as an annotation above the hunk in Neovim: the same reasoning you write in chat" })),
     }, { additionalProperties: false }),
     async execute(_id, params, _signal, _onUpdate, context) {
       ctx = context;
@@ -352,6 +360,7 @@ export default function nvimTour(pi: ExtensionAPI) {
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
         sessions.set(id, current);
+        await annotate(1, params.note);
         const content = await shownContent(context, current, shown, current.stops[0], opened.opened ? "Opened Neovim in a new tmux window.\n" : "");
         return { content: [{ type: "text", text: content }], details: { ...current, shown, stop: current.stops[0] } };
       }
@@ -366,6 +375,7 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       const shown = await nvimRequest<NvimResult>({ method: params.action === "next" ? "tour.next" : "tour.prev" });
       current.index = target;
+      await annotate(target + 1, params.note);
       return { content: [{ type: "text", text: await shownContent(context, current, shown, current.stops[target]) }], details: { ...current, shown, stop: current.stops[target] } };
     },
     renderCall(args, theme) {

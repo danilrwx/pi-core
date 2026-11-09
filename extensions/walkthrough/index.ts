@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { hasNvim, nvimRequest } from "../nvim/nvim.js";
 import {
   clipHunk, findFile, parseUnifiedDiff, selectHunks, type FileDiff,
 } from "./diff.js";
@@ -40,6 +41,9 @@ const PARAMETERS = Type.Object({
     description: "Git revision to compare against. Default HEAD (uncommitted work). Use origin/main or HEAD~1 for committed work; 'staged' and 'unstaged' are accepted",
   })),
   paths: Type.Optional(Type.Array(Type.String(), { description: "Limit the diff to these paths" })),
+  annotate: Type.Optional(Type.Boolean({
+    description: "Also write each stop's explanation as an annotation into the Neovim buffers that are already open (default true; files that are not open are left alone)",
+  })),
   stops: Type.Array(Type.Object({
     title: Type.String({ description: "Short headline for this stop: what the reader is looking at" }),
     why: Type.String({ description: "Why this change exists and why it works this way — the reasoning a reviewer needs, not a restatement of the code" }),
@@ -86,6 +90,32 @@ async function gitDiff(cwd: string, base: string | undefined, paths: readonly st
     if (/unknown revision|ambiguous argument|bad revision/i.test(message)) throw new Error(`Unknown base revision "${base}". Pass a ref that exists (e.g. origin/main, HEAD~1) or omit it for uncommitted work.`);
     throw error;
   }
+}
+
+/**
+ * Mirror the chat tour into Neovim: the same explanation hangs above the same
+ * hunk in buffers the user already has open. Files that are not open are left
+ * alone — the chat tour must not open windows or move the cursor.
+ */
+async function annotateInNvim(cwd: string, enabled: boolean, stops: readonly TourStop[]): Promise<void> {
+  if (!enabled || !hasNvim(cwd)) return;
+  const byFile = new Map<string, { from_line: number; header: string; text: string }[]>();
+  for (const stop of stops) {
+    const hunk = stop.hunks[0];
+    if (!hunk) continue;
+    const items = byFile.get(stop.file) ?? [];
+    // Anchor above the first changed line rather than the hunk's context edge,
+    // so a stop that points deep inside a hunk is annotated where it matters.
+    const changed = hunk.lines.find((line) => line.kind !== "context");
+    items.push({
+      from_line: Math.max(1, changed?.newLine ?? changed?.oldLine ?? hunk.newStart),
+      header: stop.title,
+      text: [stop.why, stop.note].filter(Boolean).join("\n"),
+    });
+    byFile.set(stop.file, items);
+  }
+  await Promise.all([...byFile].map(([file, items]) =>
+    nvimRequest({ method: "annotate", file, root: cwd, items }, 5_000).catch(() => undefined)));
 }
 
 function hunkLabel(file: FileDiff, index: number, total: number): string {
@@ -183,6 +213,8 @@ export default function walkthrough(pi: ExtensionAPI) {
       };
 
       const shown = details.map((stop, index) => `${index + 1}. ${stop.title}${stop.file ? ` (${stop.file}${stop.hunks.length ? `, hunk ${stop.hunks.join(", ")}` : ""})` : ""}${stop.warning ? ` — ${stop.warning}` : ""}`);
+      await annotateInNvim(ctx.cwd, params.annotate !== false, tourStops);
+
       pi.sendMessage<WalkthroughBlock>({
         customType: BLOCK_TYPE,
         display: true,
