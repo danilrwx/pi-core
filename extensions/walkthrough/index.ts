@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { diffSignature, rememberTour, type SharedStop } from "../lib/tour-state.js";
 import { hasNvim, nvimRequest } from "../nvim/nvim.js";
 import {
   clipHunk, findFile, parseUnifiedDiff, selectHunks, type FileDiff,
@@ -118,16 +119,85 @@ async function annotateInNvim(cwd: string, enabled: boolean, stops: readonly Tou
     nvimRequest({ method: "annotate", file, root: cwd, items }, 5_000).catch(() => undefined)));
 }
 
+/** Flatten the rendered stops into the editor-facing shape the tour consumes. */
+function sharedStops(stops: readonly TourStop[]): SharedStop[] {
+  return stops.flatMap((stop) => stop.hunks.map((hunk) => {
+    const added: number[] = [];
+    const deleted: SharedStop["deleted"] = [];
+    for (const line of hunk.lines) {
+      if (line.kind === "add" && line.newLine !== undefined) added.push(line.newLine);
+      else if (line.kind === "del") {
+        const at = line.newLine ?? added.at(-1) ?? hunk.newStart;
+        const entry = { old: line.oldLine ?? 0, text: line.text };
+        const block = deleted.at(-1);
+        if (block && block.at === at) block.lines.push(entry);
+        else deleted.push({ at, lines: [entry] });
+      }
+    }
+    return {
+      file: stop.file,
+      from: hunk.newStart,
+      to: Math.max(hunk.newStart, hunk.newStart + hunk.newCount - 1),
+      title: stop.title,
+      why: stop.why,
+      // The editor annotation is the explanation itself, note included.
+      note: [stop.why, stop.note].filter(Boolean).join("\n"),
+      added,
+      deleted,
+    };
+  }));
+}
+
 function hunkLabel(file: FileDiff, index: number, total: number): string {
   return total > 1 ? `hunk ${index + 1}/${total}` : "hunk 1/1";
 }
 
+/**
+ * The one entry point for "show me what you just did": narrate the change set in
+ * the chat, then let the reader go deeper in Neovim on the same stops.
+ *
+ * The command cannot write the explanations itself — the model has them — so it
+ * starts a turn with the shape of the review spelled out, and the tool does the
+ * rendering. Because the walkthrough records its stops, `/tour start` afterwards
+ * opens exactly these hunks with these explanations instead of planning anew.
+ */
 export default function walkthrough(pi: ExtensionAPI) {
   // The block renders itself: no tool shell, no label, just the card. It is
   // persisted with the message, so the tour survives a reload.
   pi.registerMessageRenderer<WalkthroughBlock>(BLOCK_TYPE, (message, options, theme) => {
     const tour = message.details?.tour;
     return tour ? new TourView(tour, theme, options.outputPad) : undefined;
+  });
+
+  pi.registerCommand("story", {
+    description: "Narrate the change set in the chat, then continue in Neovim: /story [--base <ref>] [paths]",
+    getArgumentCompletions: (prefix) => (prefix.startsWith("-")
+      ? [{ label: "--base", value: "--base ", description: "Compare against this revision (default: uncommitted work, else the branch point)" }]
+      : null),
+    handler: async (args, context) => {
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      let base: string | undefined;
+      const paths: string[] = [];
+      for (let index = 0; index < tokens.length; index++) {
+        const token = tokens[index];
+        if (token === "--base" || token === "-b") { base = tokens[++index]; continue; }
+        if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
+        paths.push(token);
+      }
+      const scope = [
+        base ? `base ${base}` : "the default base (uncommitted work, or the branch point when the tree is clean)",
+        paths.length ? `limited to ${paths.join(", ")}` : "the whole change set",
+      ].join(", ");
+      pi.sendUserMessage([
+        `Present a walkthrough of the current change set (${scope}).`,
+        "",
+        "1. Call the `walkthrough` tool with 3-6 stops that carry the story: the decision, the tricky part, the risk. Skip formatting, renames and generated files. Write `why` as the reasoning a reviewer cannot read off the code, not as a description of the lines.",
+        "2. Then ask me ONCE, with the `question` tool, whether the architecture and the direction are right and what to adjust. Do not interrogate me about every hunk.",
+        "",
+        "The stops are remembered, so /tour start opens the same hunks with the same explanations in Neovim, and I can comment there. Keep the stop order meaningful for that.",
+      ].join("\n"));
+      context.ui.notify(`Walking through ${scope}.`, "info");
+    },
   });
 
   pi.registerTool({
@@ -213,6 +283,14 @@ export default function walkthrough(pi: ExtensionAPI) {
       };
 
       const shown = details.map((stop, index) => `${index + 1}. ${stop.title}${stop.file ? ` (${stop.file}${stop.hunks.length ? `, hunk ${stop.hunks.join(", ")}` : ""})` : ""}${stop.warning ? ` — ${stop.warning}` : ""}`);
+      // Remember the tour so `/tour start` can bring the same stops, with these
+      // explanations, into the editor instead of planning a different set.
+      rememberTour({
+        base: params.base ?? "HEAD",
+        signature: diffSignature(files.length, tour.additions, tour.deletions),
+        stops: sharedStops(tourStops),
+      });
+
       await annotateInNvim(ctx.cwd, params.annotate !== false, tourStops);
 
       pi.sendMessage<WalkthroughBlock>({

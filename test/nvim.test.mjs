@@ -495,3 +495,70 @@ process.stdout.write(JSON.stringify({ ok: true, result: { connected: true, file:
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("/tour start reuses the walkthrough of this session and re-plans when the diff moved on", async () => {
+  const cwd = await repo();
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-reuse-"));
+  const log = join(dir, "requests.log");
+  const bin = join(dir, "fake-nvim");
+  await writeFile(bin, `#!${process.execPath}
+const fs = require("node:fs");
+const req = JSON.parse(process.env.PI_TOUR_REQUEST);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(req) + "\\n");
+let result = { connected: true, annotated: 1, installed: true };
+if (req.method === "tour.next" || req.method === "tour.prev") {
+  const stop = (req.stops && req.stops[0]) || {};
+  result = { file: "a.ts", from_line: 1, to_line: 2, text: "shown" };
+}
+if (req.method === "status") result = { connected: true };
+process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
+`);
+  execFileSync("chmod", ["755", bin]);
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
+  process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-reuse.sock";
+  process.env.PI_TOUR_NVIM_BIN = bin;
+  try {
+    const { default: walkthroughPlugin } = await jiti.import("../extensions/walkthrough/index.ts");
+    let walkthrough;
+    walkthroughPlugin({ registerTool(definition) { walkthrough = definition; }, sendMessage() {}, registerMessageRenderer() {}, registerCommand() {} });
+    await walkthrough.execute("w", {
+      base: "HEAD",
+      stops: [{ title: "First stop", why: "Because the dialog needs it", file: "a.ts", lines: [3, 3] }],
+    }, undefined, undefined, { cwd });
+
+    const commands = new Map(), notified = [];
+    nvimTour({
+      registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {},
+      registerCommand(name, command) { commands.set(name, command); },
+    });
+    const context = {
+      cwd, mode: "tui", sessionManager: { getSessionId: () => "reuse" },
+      ui: { notify(text) { notified.push(text); }, setStatus() {} },
+    };
+
+    await commands.get("tour").handler("start", context);
+    let install = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((request) => request.method === "install").at(-1);
+    assert.equal(install.stops.length, 1);
+    assert.equal(install.stops[0].note, "Because the dialog needs it", "the walkthrough explanation becomes the annotation");
+    assert.equal(install.stops[0].expandedFrom, install.stops[0].from);
+    assert.ok(notified.some((text) => /Reused the walkthrough: 1 stop/.test(text)));
+
+    // The diff moves: the remembered stops no longer describe the tree.
+    await writeFile(join(cwd, "a.ts"), Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join("\n") + "\nchanged-tail\n");
+    notified.length = 0;
+    await commands.get("tour").handler("start", context);
+    install = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((request) => request.method === "install").at(-1);
+    assert.ok(install.stops.length > 1, "a stale walkthrough must not pin the tour to old line numbers");
+    assert.equal(install.stops[0].note, undefined);
+    assert.equal(notified.some((text) => /Reused the walkthrough/.test(text)), false);
+
+    notified.length = 0;
+    await commands.get("tour").handler("start --fresh", context);
+    assert.equal(notified.some((text) => /Reused the walkthrough/.test(text)), false);
+  } finally {
+    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
+    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+    await rm(cwd, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -9,6 +9,7 @@ import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext, type T
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { completeArgs } from "../lib/complete.js";
+import { diffSignature, lastTour, type SharedTour } from "../lib/tour-state.js";
 import { nvimRequest, nvimSocket, hasNvim, type NvimResult } from "./nvim.js";
 import { openDiff } from "./diff.js";
 import { ensureNvim } from "./spawn.js";
@@ -58,6 +59,37 @@ export async function resolveTourBase(cwd: string): Promise<string> {
   return "HEAD";
 }
 
+/**
+ * The walkthrough of this session, when it still describes the diff on disk.
+ * Reusing it keeps the stops the user just read and their explanations; the
+ * signature changes as soon as the diff does, and then the tour plans afresh.
+ */
+export async function reusableTour(cwd: string, base?: string): Promise<{ tour: SharedTour; stops: TourStop[] } | undefined> {
+  const tour = lastTour();
+  if (!tour) return;
+  if (base && base !== tour.base) return;
+  let verified = true;
+  try { await git(cwd, ["rev-parse", "--verify", "--quiet", tour.base]); } catch { verified = false; }
+  if (!verified) return;
+  const current = await currentSignature(cwd, tour.base);
+  if (current !== tour.signature) return;
+  return { tour, stops: tour.stops.map((stop) => ({ ...stop, expandedFrom: stop.from, expandedTo: stop.to, kind: "hunk" })) };
+}
+
+/** `files:additions:deletions` of the diff against `base`, matching what the chat tour records. */
+async function currentSignature(cwd: string, base: string): Promise<string> {
+  const numstat = await git(cwd, ["diff", "--numstat", base]).catch(() => "");
+  let files = 0, additions = 0, deletions = 0;
+  for (const line of numstat.split("\n")) {
+    const [added, removed] = line.split("\t");
+    if (!added) continue;
+    files += 1;
+    additions += Number(added) || 0;
+    deletions += Number(removed) || 0;
+  }
+  return diffSignature(files, additions, deletions);
+}
+
 /** Build the tour from the working tree: staged/unstaged hunks plus untracked files. */
 export async function planTour(cwd: string, options: { paths?: string[]; base?: string; context?: number; maxStops?: number } = {}): Promise<TourPlan> {
   const base = options.base ?? await resolveTourBase(cwd);
@@ -78,6 +110,23 @@ export async function planTour(cwd: string, options: { paths?: string[]; base?: 
     extraAdded++;
   }
   return { stops, truncated: truncated + (extra.length - extraAdded), base };
+}
+
+/**
+ * Where a new tour comes from: the walkthrough of this session when it still
+ * matches the diff, otherwise a fresh plan of the working tree.
+ */
+async function prepareTour(
+  context: ExtensionContext,
+  options: { base?: string; paths?: string[]; fresh?: boolean; context?: number },
+): Promise<{ stops: TourStop[]; base: string; reused: boolean } | undefined> {
+  if (!options.fresh && !options.paths?.length) {
+    const reused = await reusableTour(context.cwd, options.base).catch(() => undefined);
+    if (reused?.stops.length) return { stops: reused.stops, base: reused.tour.base, reused: true };
+  }
+  const plan = await planTour(context.cwd, { base: options.base, paths: options.paths, context: options.context });
+  if (!plan.stops.length) return undefined;
+  return { stops: plan.stops, base: plan.base, reused: false };
 }
 
 /** Say what was compared, so an empty tour is not mistaken for a broken one. */
@@ -385,14 +434,19 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       if (params.action === "start") {
         const opened = await ensureNvim(context.cwd);
-        const plan = await planTour(context.cwd, params);
-        if (!plan.stops.length) return { content: [{ type: "text", text: noChanges(plan.base, params.paths ?? []) }], details: { ...plan } };
+        const prepared = await prepareTour(context, { base: params.base, paths: params.paths, context: params.context });
+        if (!prepared) {
+          const resolved = params.base ?? await resolveTourBase(context.cwd);
+          return { content: [{ type: "text", text: noChanges(resolved, params.paths ?? []) }], details: { stops: [], base: resolved, truncated: 0 } };
+        }
+        const plan = { stops: prepared.stops, base: prepared.base, truncated: 0 };
         const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: id };
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
         sessions.set(id, current);
         await annotate(1, params.note);
-        const content = await shownContent(context, current, shown, current.stops[0], opened.opened ? "Opened Neovim in a new tmux window.\n" : "");
+        const content = await shownContent(context, current, shown, current.stops[0],
+          `${opened.opened ? "Opened Neovim in a new tmux window.\n" : ""}${prepared.reused ? "Reused the stops and explanations of the walkthrough in this session.\n" : ""}`);
         return { content: [{ type: "text", text: content }], details: { ...current, shown, stop: current.stops[0] } };
       }
       const current = state();
@@ -571,11 +625,14 @@ export default function nvimTour(pi: ExtensionAPI) {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       // `--base <ref>` picks what to compare against; the rest are paths.
       let base: string | undefined;
+      let fresh = false;
       const paths: string[] = [];
       for (let index = 0; index < rest.length; index++) {
         const token = rest[index];
         if (token === "--base" || token === "-b") { base = rest[++index]; continue; }
         if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
+        if (token === "--fresh" || token === "-f") { fresh = true; continue; }
+        if (token === "fresh") { fresh = true; continue; }
         paths.push(token);
       }
       if (action === "live") {
@@ -595,8 +652,13 @@ export default function nvimTour(pi: ExtensionAPI) {
       }
       if (action === "start") {
         const opened = await ensureNvim(context.cwd);
-        const plan = await planTour(context.cwd, { paths, base });
-        if (!plan.stops.length) { context.ui.notify(noChanges(plan.base, paths), "info"); return; }
+        const prepared = await prepareTour(context, { base, paths, fresh });
+        if (!prepared) {
+          const resolved = base ?? await resolveTourBase(context.cwd);
+          context.ui.notify(noChanges(resolved, paths), "info");
+          return;
+        }
+        const plan = { stops: prepared.stops, base: prepared.base, truncated: 0 };
         const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: context.sessionManager.getSessionId() };
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
@@ -604,6 +666,7 @@ export default function nvimTour(pi: ExtensionAPI) {
         const where = relative(context.cwd, shown.file);
         const data = { index: 1, total: current.stops.length, base: plan.base, file: where, from: shown.from_line, to: shown.to_line };
         recordTour(context, data);
+        if (prepared.reused) context.ui.notify(`Reused the walkthrough: ${current.stops.length} stop${current.stops.length === 1 ? "" : "s"} · ${plan.base}`, "info");
         pi.sendMessage({
           customType: "pi-tour-hint",
           display: false,

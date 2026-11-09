@@ -46,6 +46,7 @@ function load() {
     registerTool(value) { definition = value; },
     sendMessage(message) { sent.push(message); },
     registerMessageRenderer(type, renderer) { renderers.set(type, renderer); },
+    registerCommand() {},
   });
   return Object.assign(definition, { sent, renderers });
 }
@@ -294,4 +295,26 @@ process.stdout.write(JSON.stringify({ ok: true, result: { annotated: 1 } }) + "\
     await rm(dir, { recursive: true, force: true });
     await rm(binDir, { recursive: true, force: true });
   }
+});
+
+test("/story starts a turn that narrates the change set and hands off to Neovim", async () => {
+  const commands = new Map();
+  const messages = [];
+  plugin({
+    registerTool() {},
+    registerMessageRenderer() {},
+    registerCommand(name, command) { commands.set(name, command); },
+    sendUserMessage(content) { messages.push(content); },
+  });
+  const notified = [];
+  await commands.get("story").handler("--base origin/main extensions/", { ui: { notify(text) { notified.push(text); } } });
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /base origin\/main, limited to extensions\//);
+  assert.match(messages[0], /Call the `walkthrough` tool with 3-6 stops/);
+  assert.match(messages[0], /ask me ONCE, with the `question` tool/);
+  assert.match(messages[0], /\/tour start opens the same hunks/);
+  assert.deepEqual(notified, ["Walking through base origin/main, limited to extensions/."]);
+
+  await commands.get("story").handler("", { ui: { notify() {} } });
+  assert.match(messages[1], /the default base \(uncommitted work, or the branch point when the tree is clean\), the whole change set/);
 });

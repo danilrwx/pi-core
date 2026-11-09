@@ -155,6 +155,7 @@ when needed.
 | `/todos [clear \| collapse \| expand]` | todo | Show or manage the task list. |
 | `/images` | image-preview | Open the image gallery. |
 | `/voice [mute \| cancel \| status \| api \| model \| language]` | voice | Configure and control dictation. |
+| `/story [--base <ref>] [paths]` | walkthrough | The entry point of the review flow: narrates the change set in the chat (3-6 stops with `why`), then asks one question about the architecture and direction. The stops are remembered, so `/tour start` afterwards opens the same hunks in Neovim with the same explanations. |
 | `/tour [overview \| start \| next \| prev \| status \| stop \| live]` | nvim | Walk through changes in Neovim. `start --base <ref>` reviews committed work; without a base the uncommitted tree wins, and if it is clean the tour falls back to the branch point with the default branch, so a finished branch is not greeted with "no changes". `start` also leaves a breadcrumb in the chat (stop, file:lines, `]t`/`[t`/`<leader>pc`) and a footer status, and tells the model on the next turn that a tour is running, so asking "explain this stop" works without repeating the setup. |
 | `/nvim [status \| save]` | nvim | Inspect the bridge or save a dirty buffer. |
 | `/memory [add \| search \| forget \| clear \| list \| import \| auto \| jev]` | memory | Manage long-term memory. |

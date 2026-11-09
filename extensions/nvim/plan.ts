@@ -5,7 +5,13 @@
  */
 export interface DeletedBlock { at: number; lines: { old: number; text: string }[] }
 export interface Hunk { file: string; from: number; to: number; added: number[]; deleted: DeletedBlock[] }
-export interface TourStop extends Hunk { expandedFrom: number; expandedTo: number; kind: "hunk" | "new-file" }
+export interface TourStop extends Hunk {
+  expandedFrom: number;
+  expandedTo: number;
+  kind: "hunk" | "new-file";
+  /** Explanation shown as an annotation above the hunk. */
+  note?: string;
+}
 
 /** Pure parser for `git diff --unified=0`; one stop per hunk. */
 export function parseDiffHunks(diff: string): Hunk[] {
