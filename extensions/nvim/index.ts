@@ -125,6 +125,11 @@ function header(state: TourState, stop: TourStop, shown: NvimResult): string {
     (state.index === 0 ? `Base: ${state.base}${state.truncated ? ` · ${state.truncated} more stops not shown` : ""}\n` : "");
 }
 
+/** Breadcrumb of the running tour: visible in the chat, absent from the model context. */
+const TOUR_ENTRY = "pi-core:tour";
+
+interface TourEntryData { index: number; total: number; base: string; file?: string; from?: number; to?: number }
+
 export default function nvimTour(pi: ExtensionAPI) {
   const sessions = new Map<string, TourState>();
   let ctx: ExtensionContext | undefined;
@@ -207,6 +212,29 @@ export default function nvimTour(pi: ExtensionAPI) {
     server.on("error", () => {});
     server.listen(path, () => { try { chmodSync(path, 0o600); } catch { /* best effort */ } });
   }
+  /**
+   * `/tour start` used to only toast a line, so the editor opened and the chat
+   * stayed silent: nothing said what to press or how to get an explanation.
+   * The breadcrumb keeps the state, the keys and the stop in the transcript,
+   * and the footer keeps the progress visible while the tour runs.
+   */
+  pi.registerEntryRenderer<TourEntryData>(TOUR_ENTRY, (entry, _options, theme) => {
+    const data = entry.data;
+    if (!data?.total) return undefined;
+    const where = data.file ? `${data.file}${data.from ? `:${data.from}-${data.to}` : ""}` : "installed";
+    return new Text([
+      `${theme.fg("accent", theme.bold("tour"))} ${theme.fg("muted", `${data.index}/${data.total}`)}${data.base ? theme.fg("dim", ` · ${data.base}`) : ""}`,
+      theme.fg("text", where),
+      theme.fg("dim", "]t [t move · <leader>pc comment · ask me to explain a stop"),
+    ].join("\n"), 0, 0);
+  });
+
+  function recordTour(context: ExtensionContext, data: TourEntryData): void {
+    if (context.mode !== "tui") return;
+    pi.appendEntry<TourEntryData>(TOUR_ENTRY, data);
+    context.ui.setStatus("tour", `tour ${data.index}/${data.total}`);
+  }
+
   async function install(context: ExtensionContext, stops?: TourStop[]): Promise<void> {
     await nvimRequest({
       method: "install", socket: serverPath, root: context.cwd,
@@ -523,7 +551,15 @@ export default function nvimTour(pi: ExtensionAPI) {
         await install(context, plan.stops);
         const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
         sessions.set(current.sessionId, current);
-        context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Tour 1/${current.stops.length} · ${relative(context.cwd, shown.file)}:${shown.from_line}-${shown.to_line} · ]t/[t next/prev · <leader>pc comment`, "info");
+        const where = relative(context.cwd, shown.file);
+        const data = { index: 1, total: current.stops.length, base: plan.base, file: where, from: shown.from_line, to: shown.to_line };
+        recordTour(context, data);
+        pi.sendMessage({
+          customType: "pi-tour-hint",
+          display: false,
+          content: `A Neovim tour is running: stop 1/${data.total} at ${where}:${data.from}-${data.to} (base ${plan.base}). When the user asks about the changes, explain stops one by one; use review_tour action=next to advance and the question tool once about the architecture.`,
+        }, { triggerTurn: false, deliverAs: "nextTurn" });
+        context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Tour 1/${current.stops.length} · ${where}:${shown.from_line}-${shown.to_line}`, "info");
         return;
       }
       const current = state();
@@ -531,6 +567,7 @@ export default function nvimTour(pi: ExtensionAPI) {
       if (action === "stop") {
         sessions.delete(current.sessionId);
         await nvimRequest({ method: "tour.clear" }).catch(() => {});
+        context.ui.setStatus("tour", undefined);
         context.ui.notify("Tour stopped.", "info");
         return;
       }
@@ -546,7 +583,9 @@ export default function nvimTour(pi: ExtensionAPI) {
       if (target < 0 || target >= current.stops.length) { context.ui.notify("Tour finished.", "info"); return; }
       const shown = await nvimRequest<NvimResult>({ method: action === "next" ? "tour.next" : "tour.prev" });
       current.index = target;
-      context.ui.notify(`Tour ${target + 1}/${current.stops.length} · ${relative(context.cwd, shown.file)}:${shown.from_line}-${shown.to_line}`, "info");
+      const where = relative(context.cwd, shown.file);
+      recordTour(context, { index: target + 1, total: current.stops.length, base: current.base, file: where, from: shown.from_line, to: shown.to_line });
+      context.ui.notify(`Tour ${target + 1}/${current.stops.length} · ${where}:${shown.from_line}-${shown.to_line}`, "info");
     },
   });
 

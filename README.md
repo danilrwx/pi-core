@@ -155,7 +155,7 @@ when needed.
 | `/todos [clear \| collapse \| expand]` | todo | Show or manage the task list. |
 | `/images` | image-preview | Open the image gallery. |
 | `/voice [mute \| cancel \| status \| api \| model \| language]` | voice | Configure and control dictation. |
-| `/tour [overview \| start \| next \| prev \| status \| stop \| live]` | nvim | Walk through changes in Neovim. |
+| `/tour [overview \| start \| next \| prev \| status \| stop \| live]` | nvim | Walk through changes in Neovim. `start` also leaves a breadcrumb in the chat (stop, file:lines, `]t`/`[t`/`<leader>pc`) and a footer status, and tells the model on the next turn that a tour is running, so asking "explain this stop" works without repeating the setup. |
 | `/nvim [status \| save]` | nvim | Inspect the bridge or save a dirty buffer. |
 | `/memory [add \| search \| forget \| clear \| list \| import \| auto \| jev]` | memory | Manage long-term memory. |
 | `/checkpoint [list \| restore \| on \| off]` | checkpoint | Manage code snapshots. |

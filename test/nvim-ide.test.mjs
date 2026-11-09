@@ -32,6 +32,7 @@ function harness() {
     registerTool(tool) { tools.set(tool.name, tool); },
     registerCommand(name, command) { commands.set(name, command); },
     registerShortcut() {}, on(name, handler) { handlers.set(name, handler); },
+    registerEntryRenderer() {}, appendEntry() {},
     sendMessage(message, options) { messages.push({ message, options }); },
   });
   return { tools, commands, handlers, messages };
