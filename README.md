@@ -35,39 +35,24 @@ cd pi-core
 npm ci --ignore-scripts
 ```
 
-Point pi at the extensions you want in `~/.pi/agent/settings.json`:
+Add the local package to `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "extensions": [
-    "/absolute/path/to/pi-core/extensions/background-jobs/index.ts",
-    "/absolute/path/to/pi-core/extensions/btw/index.ts",
-    "/absolute/path/to/pi-core/extensions/partial-output/index.ts",
-    "/absolute/path/to/pi-core/extensions/read-watch/index.ts",
-    "/absolute/path/to/pi-core/extensions/image-preview/index.ts",
-    "/absolute/path/to/pi-core/extensions/voice/index.ts",
-    "/absolute/path/to/pi-core/extensions/todo/index.ts",
-    "/absolute/path/to/pi-core/extensions/question/index.ts",
-    "/absolute/path/to/pi-core/extensions/nvim/index.ts",
-    "/absolute/path/to/pi-core/extensions/memory/index.ts",
-    "/absolute/path/to/pi-core/extensions/notify/index.ts",
-    "/absolute/path/to/pi-core/extensions/index/index.ts",
-    "/absolute/path/to/pi-core/extensions/batch/index.ts",
-    "/absolute/path/to/pi-core/extensions/rtk/index.ts",
-    "/absolute/path/to/pi-core/extensions/golangci-lint/index.ts",
-    "/absolute/path/to/pi-core/extensions/bash-head-tail/index.ts",
-    "/absolute/path/to/pi-core/extensions/checkpoint/index.ts",
-    "/absolute/path/to/pi-core/extensions/cache-warming/index.ts",
-    "/absolute/path/to/pi-core/extensions/cache-guard/index.ts",
-    "/absolute/path/to/pi-core/extensions/usage/index.ts",
-    "/absolute/path/to/pi-core/extensions/handoff/index.ts",
-    "/absolute/path/to/pi-core/extensions/lsp-pi/index.ts",
-    "/absolute/path/to/pi-core/extensions/session-query/index.ts"
+  "packages": [
+    {
+      "source": "/absolute/path/to/pi-core",
+      "skills": ["skills/session-query"]
+    }
   ]
 }
 ```
 
-Reload pi with `/reload`. The list above is the recommended set; every extension is independent, and the optional policy layer can be added separately.
+The package manifest exposes the recommended extension set. Optional extensions such as `permission`, `context`, and `interactive-shell` are intentionally not loaded by default and can be added as explicit extension paths later. The `skills` filter exposes only the local `session-query` skill; remove the filter if you want every skill under `skills/`.
+
+`pi install /absolute/path/to/pi-core` also works and writes the same package source. Add the `skills` filter to the resulting package entry if you want only `session-query` instead of every local skill.
+
+Reload pi with `/reload`.
 
 > **Requirements:** pi `>= 1.3.0`, Node `>= 22.19.0`, and a Unix host for background jobs. `rtk`, `golangci-lint`, LSP servers, Neovim, Kitty/tmux, `pw-record`, and `whisper-cli` are optional — each only matters when its extension is used.
 

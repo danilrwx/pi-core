@@ -38,7 +38,29 @@
   },
   "pi": {
     "extensions": [
-      "extensions"
+      "extensions/background-jobs/index.ts",
+      "extensions/btw/index.ts",
+      "extensions/partial-output/index.ts",
+      "extensions/read-watch/index.ts",
+      "extensions/image-preview/index.ts",
+      "extensions/voice/index.ts",
+      "extensions/todo/index.ts",
+      "extensions/question/index.ts",
+      "extensions/nvim/index.ts",
+      "extensions/memory/index.ts",
+      "extensions/notify/index.ts",
+      "extensions/index/index.ts",
+      "extensions/batch/index.ts",
+      "extensions/rtk/index.ts",
+      "extensions/golangci-lint/index.ts",
+      "extensions/bash-head-tail/index.ts",
+      "extensions/checkpoint/index.ts",
+      "extensions/cache-warming/index.ts",
+      "extensions/cache-guard/index.ts",
+      "extensions/usage/index.ts",
+      "extensions/handoff/index.ts",
+      "extensions/lsp-pi/index.ts",
+      "extensions/session-query/index.ts"
     ],
     "skills": [
       "skills"
