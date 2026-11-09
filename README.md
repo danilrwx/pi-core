@@ -128,7 +128,7 @@ when needed.
 
 | Extension | What it does |
 |---|---|
-| [`nvim`](extensions/nvim) | The Neovim bridge: `/tour`, `review_tour`, live-follow, bidirectional comments, `show`, `selection`, `nvim_context`, and `propose_change` with an accept/reject diff. |
+| [`nvim`](extensions/nvim) | The Neovim bridge: `/tour`, `review_tour`, live-follow, bidirectional comments, `show`, `selection`, `nvim_context`, and `propose_change` with an accept/reject diff. The tour draws diffs with extmarks only (no `:diffthis`): added lines are highlighted in place, removed lines are put back where they were removed with their old line numbers in the gutter and the code aligned to the buffer text. A chat card for the same step stays three lines — the hunk lives in the editor. |
 | [`lsp-pi`](extensions/lsp-pi) | LSP diagnostics hook and on-demand `lsp` tool. One server per project root, idle shutdown, LRU-bounded document cache. |
 | [`golangci-lint`](extensions/golangci-lint) | Runs `golangci-lint run --fix` only for packages containing files the agent actually changed — never the whole module. |
 | [`handoff`](extensions/handoff) | `/handoff` distills the current conversation into a focused prompt for a fresh session, optionally with a mode or model. |

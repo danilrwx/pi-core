@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { jiti } from "./host.mjs";
-const { parseDiffHunks, buildStops, newFileStop } = await jiti.import("../extensions/nvim/plan.ts");
+const { parseDiffHunks, buildStops, newFileStop, deletedLineCount } = await jiti.import("../extensions/nvim/plan.ts");
 const { planTour, default: nvimTour } = await jiti.import("../extensions/nvim/index.ts");
 
 function git(cwd, ...args) { return execFileSync("git", args, { cwd, encoding: "utf8" }); }
@@ -31,6 +31,24 @@ test("diff parser reads hunk ranges, including deletions", () => {
     { file: "a.ts", from: 20, to: 21, added: [], deleted: [] },
     { file: "new.ts", from: 1, to: 2, added: [], deleted: [] },
   ]);
+});
+
+test("removed lines keep the position and the old line number they had", () => {
+  const diff = [
+    "+++ b/a.ts",
+    "@@ -10,4 +10,0 @@ gone",
+    "-one",
+    "-two",
+    "@@ -30,1 +27,1 @@ swap",
+    "-old",
+    "+new",
+  ].join("\n");
+  const [removed, swapped] = parseDiffHunks(diff);
+  assert.deepEqual(removed.deleted, [{ at: 10, lines: [{ old: 10, text: "one" }, { old: 11, text: "two" }] }]);
+  assert.deepEqual(swapped.deleted, [{ at: 27, lines: [{ old: 30, text: "old" }] }]);
+  assert.deepEqual(swapped.added, [27]);
+  assert.equal(deletedLineCount(removed), 2);
+  assert.equal(deletedLineCount({ deleted: [] }), 0);
 });
 
 test("buildStops expands context, merges nearby hunks and caps sizes", () => {
@@ -242,7 +260,7 @@ test("diff parser records added line numbers and removed text", () => {
   const diff = ["+++ b/a.ts", "@@ -2,2 +2,3 @@", "-old line", "+new one", "+new two", " context"].join("\n");
   const [hunk] = parseDiffHunks(diff);
   assert.deepEqual(hunk.added, [2, 3]);
-  assert.deepEqual(hunk.deleted, ["old line"]);
+  assert.deepEqual(hunk.deleted, [{ at: 2, lines: [{ old: 2, text: "old line" }] }]);
   assert.equal(hunk.from, 2);
   assert.equal(hunk.to, 4);
 });

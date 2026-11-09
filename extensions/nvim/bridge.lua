@@ -261,7 +261,7 @@ end
 function M.show_stop(stop)
   return show({
     method = "show", file = stop.file, from_line = stop.expandedFrom, to_line = stop.expandedTo,
-    root = M.tour and M.tour.root or nil, mode = "diff", added = stop.added, deleted = stop.deleted,
+    root = M.tour and M.tour.root or nil, mode = "diff", added = stop.added, deleted_blocks = stop.deleted,
   })
 end
 
@@ -538,20 +538,38 @@ show = function(request)
         })
       end
     end
-    local deleted = request.deleted or {}
-    if #deleted > 0 then
-      local lines = {}
-      for index, text in ipairs(deleted) do
-        if index > 20 then break end
-        lines[#lines + 1] = { { "- " .. tostring(text), "DiffDelete" } }
+    -- Removed lines go back where they were, each block anchored at the
+    -- new-file line it preceded, with the old line number in the gutter and
+    -- the code starting in the same column as the buffer text.
+    local blocks = request.deleted_blocks or {}
+    if #blocks > 0 then
+      local info = vim.fn.getwininfo(vim.api.nvim_get_current_win())[1] or {}
+      local textoff = math.max(2, tonumber(info.textoff) or 4)
+      local number_width = math.max(2, textoff - 3)
+      local rendered = 0
+      for _, block in ipairs(blocks) do
+        if rendered >= 40 then break end
+        local lines = {}
+        for _, entry in ipairs(block.lines or {}) do
+          if rendered >= 40 then break end
+          local number = tostring(entry.old or "")
+          local pad = string.rep(" ", math.max(0, number_width - #number))
+          lines[#lines + 1] = {
+            { pad .. number, "LineNr" },
+            { " - ", "DiffDelete" },
+            { tostring(entry.text or ""), "DiffDelete" },
+          }
+          rendered = rendered + 1
+        end
+        if (#block.lines or 0) > 0 then
+          local at = math.max(1, math.min(tonumber(block.at) or first, count))
+          local above = (tonumber(block.at) or first) <= count
+          vim.api.nvim_buf_set_extmark(buf, ns, at - 1, 0, {
+            virt_lines = lines,
+            virt_lines_above = above,
+          })
+        end
       end
-      if #deleted > 20 then
-        lines[#lines + 1] = { { ("… %d more removed"):format(#deleted - 20), "Comment" } }
-      end
-      vim.api.nvim_buf_set_extmark(buf, ns, first - 1, 0, {
-        virt_lines = lines,
-        virt_lines_above = true,
-      })
     end
   else
     vim.api.nvim_buf_set_extmark(buf, ns, first - 1, 0, {

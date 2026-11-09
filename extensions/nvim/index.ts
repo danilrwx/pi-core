@@ -12,7 +12,7 @@ import { completeArgs } from "../lib/complete.js";
 import { nvimRequest, nvimSocket, hasNvim, type NvimResult } from "./nvim.js";
 import { openDiff } from "./diff.js";
 import { ensureNvim } from "./spawn.js";
-import { buildStops, newFileStop, parseDiffHunks, type TourStop } from "./plan.js";
+import { buildStops, deletedLineCount, newFileStop, parseDiffHunks, type TourStop } from "./plan.js";
 
 const run = promisify(execFile);
 const git = async (cwd: string, args: string[]) => (await run("git", args, { cwd, maxBuffer: 8 * 1024 * 1024 })).stdout;
@@ -110,7 +110,7 @@ function renderTour(result: { content: { type: string; text?: string }[]; detail
   const stop = details.stop ?? stops[details.index];
   const total = stops.length;
   const file = stop ? `${stop.file}:${(details.shown?.from_line ?? stop.expandedFrom)}-${(details.shown?.to_line ?? stop.expandedTo)}` : "";
-  const counts = stop ? `${theme.fg("success", `+${stop.added.length}`)} ${theme.fg("error", `−${stop.deleted.length}`)}` : "";
+  const counts = stop ? `${theme.fg("success", `+${stop.added.length}`)} ${theme.fg("error", `−${deletedLineCount(stop)}`)}` : "";
   const lines = [
     `${theme.fg("accent", progressBar(index, total))} ${theme.fg("muted", `tour ${index}/${total}`)} ${counts}`,
     theme.fg("dim", file),
