@@ -6,6 +6,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { frameLines } from "../lib/frame.js";
 import { cacheRate, collectUsage, formatMoney, formatTokens, type Summary, type UsageData } from "./data.js";
 
 interface ThemeLike { fg(token: string, text: string): string; bold(text: string): string }
@@ -89,7 +90,13 @@ async function showUsage(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promis
       render(currentWidth: number) {
         if (currentWidth !== width) {
           width = currentWidth;
-          lines = renderUsage(data, currentWidth, theme);
+          lines = frameLines({
+            theme,
+            title: "usage",
+            width: currentWidth,
+            body: renderUsage(data, Math.max(20, currentWidth - 4), theme),
+            footer: [theme.fg("dim", "Esc or q to close")],
+          });
         }
         return lines;
       },

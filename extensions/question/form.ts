@@ -4,6 +4,7 @@ import {
   type Component, type EditorTheme, type TUI,
 } from "@earendil-works/pi-tui";
 import { getDictationService, type DictationService } from "../lib/dictation.js";
+import { frameLines } from "../lib/frame.js";
 import type { Question, QuestionResult } from "./normalize.js";
 
 const CUSTOM_LABEL = "Type your own answer";
@@ -164,7 +165,8 @@ export function createQuestionForm(
       for (let i = 0; i < wrapped.length; i++) lines.push(`${i === 0 ? prefix : " ".repeat(prefixWidth)}${wrapped[i]}`);
     };
     const current = question();
-    lines.push(theme.fg("accent", "─".repeat(renderWidth)));
+    const body: string[] = [];
+    const footerHint = (text: string) => body.push(theme.fg("dim", text));
     if (isMulti) {
       const tabs: string[] = [" "];
       for (let index = 0; index < questions.length; index++) {
@@ -227,9 +229,16 @@ export function createQuestionForm(
         : isMulti ? "↑↓ navigate · Enter select · Tab questions · Esc dismiss" : "↑↓ navigate · Enter select · Esc dismiss";
       addPrefixed(" ", theme.fg("dim", hint));
     }
-    lines.push(theme.fg("accent", "─".repeat(renderWidth)));
-    cached = lines;
-    return lines;
+    const hintLine = lines.pop() ?? "";
+    const framed = frameLines({
+      theme,
+      title: `question${isMulti ? ` ${Math.min(tab + 1, questions.length)}/${questions.length}` : ""}${question()?.header ? ` · ${question()!.header}` : ""}`,
+      width: renderWidth,
+      body: lines,
+      footer: hintLine ? [hintLine] : [],
+    });
+    cached = framed;
+    return framed;
   }
 
   return { render, handleInput, invalidate: () => { cached = undefined; } };

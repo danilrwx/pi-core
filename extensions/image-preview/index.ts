@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, Image, Text, getCapabilities, matchesKey } from "@earendil-works/pi-tui";
+import { frameLines } from "../lib/frame.js";
 import { imageReferences, previewData, previewFile, removeReference, type PreviewImage } from "./images.js";
 import { KittyPlaceholderImage, kittyTmuxAvailable, kittyTmuxReason } from "./kitty.js";
 
@@ -128,7 +129,13 @@ export default function imagePreview(pi: ExtensionAPI) {
               : new Image(item.data, item.mimeType, { fallbackColor: (text) => theme.fg("muted", text) }, { maxWidthCells: 90, maxHeightCells: 25, filename: item.label });
           }
           const hint = inlineImages() ? "" : " · o open in Kitty";
-          return [...new Text(`${index + 1}/${items.length} · ${item.label}\n←/→ switch · d remove draft attachment${hint} · Esc close`, 0, 0).render(width), ...shown!.render(width)];
+          return frameLines({
+            theme,
+            title: `images ${index + 1}/${items.length} · ${item.label}`,
+            width,
+            body: shown!.render(width - 4),
+            footer: [theme.fg("dim", `←/→ switch · d remove draft attachment${hint} · Esc close`)],
+          });
         },
         handleInput(data) {
           if (matchesKey(data, "escape") || data === "q") { done(); return; }
