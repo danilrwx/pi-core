@@ -2,7 +2,7 @@ import {
   truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component,
 } from "@earendil-works/pi-tui";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { getLanguageFromPath, highlightCode, type Theme } from "@earendil-works/pi-coding-agent";
 import type { Hunk } from "./diff.js";
 
 export interface TourStop {
@@ -153,7 +153,11 @@ export class TourView implements Component {
         if (budget <= 0) { push(theme.fg("dim", "   … diff budget reached")); break; }
         push(`${theme.fg("dim", `   ${hunk.header}`)}${hunk.context ? theme.fg("muted", ` ${hunk.context}`) : ""}`);
         const shown = hunk.lines.slice(0, Math.min(MAX_DIFF_LINES, budget));
-        const pairs = pairChanges(hunk.lines);
+        // A hunk with only added lines has nothing to pair against, so it gets
+        // real syntax highlighting instead of word marking.
+        const addedOnly = hunk.lines.every((line) => line.kind === "add");
+        const language = addedOnly ? getLanguageFromPath(stop.file) : undefined;
+        const pairs = addedOnly ? new Map<number, number>() : pairChanges(hunk.lines);
         const markings = new Map<number, Segment[]>();
         for (const [removedIndex, addedIndex] of pairs) {
           const removed = hunk.lines[removedIndex];
@@ -168,10 +172,20 @@ export class TourView implements Component {
           const token = line.kind === "add" ? "toolDiffAdded" : line.kind === "del" ? "toolDiffRemoved" : "toolDiffContext";
           // `shown` is a prefix of the hunk, so the position is the same index.
           const segments = markings.get(index);
-          const code = segments
+          const plainCode = segments
             ? segments.map((segment) => (segment.changed ? theme.inverse?.(segment.text) ?? segment.text : segment.text)).join("")
             : line.text;
-          const body = truncateToWidth(`${gutter} ${marker} ${code}`, w - 3, "…");
+          if (language) {
+            // highlightCode reads the global theme; a bare theme (tests, early
+            // load) throws, and plain code is a fine fallback.
+            let highlighted: string | undefined;
+            try { highlighted = highlightCode(plainCode, language)[0]; } catch { highlighted = undefined; }
+            if (highlighted !== undefined) {
+              push(`   ${theme.fg(token, `${gutter} ${marker}`)} ${truncateToWidth(highlighted, Math.max(8, w - 3 - gutter.length - 2), "…")}`);
+              return;
+            }
+          }
+          const body = truncateToWidth(`${gutter} ${marker} ${plainCode}`, w - 3, "…");
           push(`   ${theme.fg(token, body)}`);
         });
         budget -= shown.length;

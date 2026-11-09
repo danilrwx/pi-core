@@ -40,8 +40,14 @@ index 3333333..4444444 100644
 
 function load() {
   let definition;
-  plugin({ registerTool(value) { definition = value; } });
-  return definition;
+  const sent = [];
+  const renderers = new Map();
+  plugin({
+    registerTool(value) { definition = value; },
+    sendMessage(message) { sent.push(message); },
+    registerMessageRenderer(type, renderer) { renderers.set(type, renderer); },
+  });
+  return Object.assign(definition, { sent, renderers });
 }
 
 async function repo(files) {
@@ -101,6 +107,32 @@ test("word diff marks only the tokens that changed and pairs -/+ runs", () => {
   assert.deepEqual([...pairChanges(lines)], [[1, 3]]);
 });
 
+test("registers a block renderer that draws the tour and ignores foreign payloads", () => {
+  const definition = load();
+  const renderer = definition.renderers.get("pi-core:walkthrough");
+  assert.equal(typeof renderer, "function");
+  const tour = { title: "T", base: "HEAD", fileCount: 1, additions: 1, deletions: 0, stops: [] };
+  const component = renderer({ customType: "pi-core:walkthrough", content: "T", display: true, details: { tour } }, { expanded: false, outputPad: 1 }, theme);
+  assert.ok(component);
+  assert.match(component.render(60).join("\n"), /changes tour/);
+  assert.equal(renderer({ customType: "pi-core:walkthrough", content: "x", display: true }, { expanded: false, outputPad: 0 }, theme), undefined);
+});
+
+test("an all-added hunk falls back to plain code when highlighting is unavailable", () => {
+  const [file] = parseUnifiedDiff("diff --git a/new.ts b/new.ts\n--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n");
+ const view = new TourView({
+    title: "New file",
+    base: "HEAD",
+    fileCount: 1,
+    additions: 2,
+    deletions: 0,
+    stops: [{ title: "New", why: "Whole file", file: "new.ts", hunks: file.hunks }],
+  }, theme);
+  const screen = view.render(80).join("\n");
+  assert.match(screen, /\+ const a = 1;/);
+  assert.match(screen, /\+ const b = 2;/);
+});
+
 test("a line range clips the hunk to the requested lines plus context", () => {
   const [app] = parseUnifiedDiff(SAMPLE);
   const clipped = clipHunk(app.hunks[0], 2, 3, 0);
@@ -158,16 +190,22 @@ test("presents a real git diff, picks hunks and reports the summary", async () =
     assert.match(result.content[0].text, /1\. New export \(app.js, hunk 1\)/);
     assert.equal(result.details.stops[0].file, "app.js");
     assert.deepEqual(result.details.stops[0].hunks, [1]);
+    assert.equal(result.details.fileCount, 2);
+    const block = definition.sent.at(-1);
+    assert.equal(block.customType, "pi-core:walkthrough");
+    assert.equal(block.display, true);
+    assert.equal(block.details.tour.stops.length, 2);
+
     const focused = await definition.execute("id", {
       base: "HEAD",
       stops: [{ title: "Just b", why: "One line", file: "app.js", lines: [20, 20] }],
     }, undefined, undefined, { cwd: dir });
-    const focusedHunk = focused.details.tour.stops[0].hunks[0];
-    const wholeHunk = result.details.tour.stops[0].hunks[0];
+    const focusedHunk = definition.sent.at(-1).details.tour.stops[0].hunks[0];
+    const wholeHunk = block.details.tour.stops[0].hunks[0];
     assert.ok(focusedHunk.lines.length < wholeHunk.lines.length, "a line range must show fewer lines than the whole hunk");
     assert.ok(focusedHunk.lines.some((line) => line.text === "export const b = 2;"));
 
-    const screen = result.details.tour && new TourView(result.details.tour, theme).render(70).join("\n");
+    const screen = new TourView(block.details.tour, theme).render(70).join("\n");
     assert.match(screen, /\+ export const b = 2;/);
     assert.match(screen, /why {2}The dialog needs ab/);
     git("checkout", "--", ".");

@@ -21,6 +21,13 @@ const run = promisify(execFile);
 
 const MAX_STOPS = 12;
 
+/** Custom block type: the tour is a transcript block, not a tool shell. */
+const BLOCK_TYPE = "pi-core:walkthrough";
+
+interface WalkthroughBlock {
+  tour: Tour;
+}
+
 /** Tool failures still carry a details field; the contract requires the key. */
 function fail(message: string) {
   return { content: [{ type: "text" as const, text: `Error: ${message}` }], details: undefined, isError: true };
@@ -55,8 +62,9 @@ interface WalkthroughDetails {
   base: string;
   files: { path: string; additions: number; deletions: number; hunks: number }[];
   stops: StopDetails[];
-  /** Renders the tour after a reload; the selected hunks live here. */
-  tour: Tour;
+  fileCount: number;
+  additions: number;
+  deletions: number;
 }
 
 function describeBase(base: string | undefined): { args: string[]; label: string } {
@@ -85,6 +93,13 @@ function hunkLabel(file: FileDiff, index: number, total: number): string {
 }
 
 export default function walkthrough(pi: ExtensionAPI) {
+  // The block renders itself: no tool shell, no label, just the card. It is
+  // persisted with the message, so the tour survives a reload.
+  pi.registerMessageRenderer<WalkthroughBlock>(BLOCK_TYPE, (message, options, theme) => {
+    const tour = message.details?.tour;
+    return tour ? new TourView(tour, theme, options.outputPad) : undefined;
+  });
+
   pi.registerTool({
     name: "walkthrough",
     label: "Walkthrough",
@@ -168,6 +183,13 @@ export default function walkthrough(pi: ExtensionAPI) {
       };
 
       const shown = details.map((stop, index) => `${index + 1}. ${stop.title}${stop.file ? ` (${stop.file}${stop.hunks.length ? `, hunk ${stop.hunks.join(", ")}` : ""})` : ""}${stop.warning ? ` — ${stop.warning}` : ""}`);
+      pi.sendMessage<WalkthroughBlock>({
+        customType: BLOCK_TYPE,
+        display: true,
+        content: params.title ?? "Change tour",
+        details: { tour },
+      });
+
       const summary = [
         `Walkthrough shown against ${tour.base}: ${files.length} files, +${tour.additions}/−${tour.deletions}, ${tourStops.length} stops.`,
         ...shown,
@@ -180,7 +202,9 @@ export default function walkthrough(pi: ExtensionAPI) {
           base: tour.base,
           files: files.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions, hunks: file.hunks.length })),
           stops: details,
-          tour,
+          fileCount: tour.fileCount,
+          additions: tour.additions,
+          deletions: tour.deletions,
         } satisfies WalkthroughDetails,
       };
     },
@@ -193,11 +217,14 @@ export default function walkthrough(pi: ExtensionAPI) {
         0, 0,
       );
     },
-    renderResult(result, _options, theme, context) {
+    renderResult(result, _options, theme) {
       const details = result.details as WalkthroughDetails | undefined;
-      if (details?.tour) return new TourView(details.tour, theme, context.outputPad);
-      const part = result.content[0];
-      return new Text(part?.type === "text" ? part.text : "", 0, 0);
+      if (!details?.fileCount) {
+        const part = result.content[0];
+        return new Text(part?.type === "text" ? part.text : "", 0, 0);
+      }
+      // The card above carries the presentation; this is the closing line.
+      return new Text(theme.fg("dim", `${details.stops.length} stop${details.stops.length === 1 ? "" : "s"} · ${details.fileCount} file${details.fileCount === 1 ? "" : "s"} · ${theme.fg("success", `+${details.additions}`)} ${theme.fg("error", `−${details.deletions}`)} · ${details.base}`), 0, 0);
     },
   });
 }
