@@ -129,7 +129,7 @@ when needed.
 
 | Extension | What it does |
 |---|---|
-| [`nvim`](extensions/nvim) | The Neovim bridge: `/tour`, `review_tour`, live-follow, bidirectional comments, `show`, `selection`, `nvim_context`, and `propose_change` with an accept/reject diff. The tour draws diffs with extmarks only (no `:diffthis`): added lines are highlighted in place, removed lines are put back where they were removed with their old line numbers in the gutter and the code aligned to the buffer text. A chat card for the same step stays three lines — the hunk lives in the editor. Every stop carries an **annotation** above its first changed line: the position and counts on the header line, then the agent's explanation (`review_tour … note=…`), kept on the stop so `]t`/`[t` brings it back. A stop without an explanation says `no explanation yet — ask pi` instead of looking empty, and a whole new file is annotated but not painted green line by line. |
+| [`nvim`](extensions/nvim) | The Neovim bridge: `/story` mirrors its stops here automatically, live-follow, bidirectional comments, `show`, `selection`, `nvim_context`, and `propose_change` with an accept/reject diff. The tour draws diffs with extmarks only (no `:diffthis`): added lines are highlighted in place, removed lines are put back where they were removed with their old line numbers in the gutter and the code aligned to the buffer text. A chat card for the same step stays three lines — the hunk lives in the editor. Every stop carries an **annotation** above its first changed line: the position and counts on the header line, then the agent's explanation (`review_tour … note=…`), kept on the stop so `]t`/`[t` brings it back. A stop without an explanation says `no explanation yet — ask pi` instead of looking empty, and a whole new file is annotated but not painted green line by line. |
 | [`lsp-pi`](extensions/lsp-pi) | LSP diagnostics hook and on-demand `lsp` tool. One server per project root, idle shutdown, LRU-bounded document cache. |
 | [`golangci-lint`](extensions/golangci-lint) | Runs `golangci-lint run --fix` only for packages containing files the agent actually changed — never the whole module. |
 | [`handoff`](extensions/handoff) | `/handoff` distills the current conversation into a focused prompt for a fresh session, optionally with a mode or model. |
@@ -156,9 +156,8 @@ when needed.
 | `/todos [clear \| collapse \| expand]` | todo | Show or manage the task list. |
 | `/images` | image-preview | Open the image gallery. |
 | `/voice [mute \| cancel \| status \| api \| model \| language]` | voice | Configure and control dictation. |
-| `/story [--base <ref>] [paths] \| submit \| stop \| status]` | walkthrough | The only entry point you need: narrates the change set (3-6 stops with `why`) and opens the review panel on the same stops when that turn ends; `/story` again re-opens the panel, `submit` writes one digest, `stop` cancels. No questions from the agent, no second command. The stops are remembered, so `/tour start` afterwards opens the same hunks in Neovim with the same explanations. Without `--base` the base is resolved like this: uncommitted or untracked work, else the branch point with the default branch, else the last commit (`HEAD~1`). |
-| `/tour [overview \| start \| next \| prev \| status \| stop \| live]` | nvim | Walk through changes in Neovim. `start` reuses the stops and explanations of the walkthrough; without one it asks the agent to narrate them first and then opens the annotated tour, while `--plain` skips the narration for a quick pass. `start --base <ref>` reviews committed work; without a base the uncommitted tree wins, and if it is clean the tour falls back to the branch point with the default branch, so a finished branch is not greeted with "no changes". `start` also leaves a breadcrumb in the chat (stop, file:lines, `]t`/`[t`/`<leader>pc`) and a footer status, and tells the model on the next turn that a tour is running, so asking "explain this stop" works without repeating the setup. |
-| `/nvim [status \| save]` | nvim | Inspect the bridge or save a dirty buffer. |
+| `/story [--base <ref>] [paths] \| submit \| stop \| status]` | walkthrough | The only entry point you need: narrates the change set (3-6 stops with `why`), opens the review panel on the same stops when that turn ends and mirrors them into a connected Neovim as annotations. `/story` again re-opens the panel, `submit` writes one digest, `stop` cancels. No questions from the agent, no second command. Without `--base` the base is resolved like this: uncommitted or untracked work, else the branch point with the default branch, else the last commit (`HEAD~1`). |
+| `/nvim [status \| save [file] \| live on\|off]` | nvim | Inspect the bridge, save a dirty buffer, or toggle live-follow. |
 | `/memory [add \| search \| forget \| clear \| list \| import \| auto \| jev]` | memory | Manage long-term memory. |
 | `/checkpoint [list \| restore \| on \| off]` | checkpoint | Manage code snapshots. |
 | `/rewind` | checkpoint | Restore code and optionally rewind the conversation tree. |
@@ -213,7 +212,7 @@ Inside tmux with Kitty, inline images need:
 set -g allow-passthrough on
 ```
 
-If no Neovim is connected and pi is running inside tmux, the tour can open a review window automatically. Set `PI_NVIM_AUTO_OPEN=0` to disable that.
+`/story` mirrors its stops into a **connected** Neovim, so `]t`/`[t` and `<leader>pc` work there too; it never opens a window on its own. `PI_NVIM_AUTO_OPEN=0` disables the explicit auto-open requests.
 
 ---
 

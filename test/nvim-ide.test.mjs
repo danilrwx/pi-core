@@ -33,6 +33,7 @@ function harness() {
     registerCommand(name, command) { commands.set(name, command); },
     registerShortcut() {}, on(name, handler) { handlers.set(name, handler); },
     registerEntryRenderer() {}, appendEntry() {},
+    events: { on() {}, emit() {} },
     sendMessage(message, options) { messages.push({ message, options }); },
   });
   return { tools, commands, handlers, messages };
@@ -155,7 +156,7 @@ test("live follow opens the edited range in Neovim and can be disabled", async (
     assert.equal(sent.at(-1).method, "show");
     assert.equal(sent.at(-1).from_line, 5);
     assert.deepEqual(sent.at(-1).added, [5]);
-    await h.commands.get("tour").handler("live off", ctx);
+    await h.commands.get("nvim").handler("live off", ctx);
     await h.handlers.get("tool_result")({ toolName: "edit", isError: false, input: { path: "a.ts" }, details: { firstChangedLine: 9 } }, ctx);
     await new Promise((done) => setTimeout(done, 300));
     assert.equal((await requests(fake.log)).length, sent.length);
@@ -183,7 +184,8 @@ test("agent_end suggests one review after a large change set", async () => {
     await h.handlers.get("agent_end")({}, ctx);
     assert.equal(h.messages.length, 1);
     assert.equal(h.messages[0].message.customType, "pi-review-hint");
-    assert.match(h.messages[0].message.content, /review_tour action=overview/);
+    assert.match(h.messages[0].message.content, /run the walkthrough tool/);
+    assert.doesNotMatch(h.messages[0].message.content, /question tool/);
     assert.deepEqual(h.messages[0].options, { triggerTurn: false, deliverAs: "nextTurn" });
     assert.match(notices[0], /Large change set/);
     await h.handlers.get("agent_end")({}, ctx);

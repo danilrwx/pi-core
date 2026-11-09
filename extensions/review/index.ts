@@ -176,6 +176,7 @@ export default function review(pi: ExtensionAPI): void {
     // One custom message is the whole footprint in the main conversation: it is
     // in the context from now on, and the threads themselves are not.
     pi.sendMessage({ customType: "pi-core:review", display: true, content: `${header}\n\n${digest || fallbackSummary(current)}` });
+    pi.events.emit("pi-core:review-closed", {});
     session = undefined;
     setReviewActive(false);
     cost = { side: 0 };
@@ -285,6 +286,7 @@ export default function review(pi: ExtensionAPI): void {
     if (data.action === "open") { void openOverlay(ctx); return; }
     if (data.action === "submit") { void submit(ctx); return; }
     if (data.action === "stop") {
+      pi.events.emit("pi-core:review-closed", {});
       session = undefined;
       setReviewActive(false);
       cost = { side: 0 };

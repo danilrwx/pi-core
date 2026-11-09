@@ -340,10 +340,10 @@ export default function nvimTour(pi: ExtensionAPI) {
     const signature = `${files}:${changed}`;
     if (signature === lastReview.signature || Date.now() - lastReview.at < 10 * 60_000) return;
     lastReview = { signature, at: Date.now() };
-    context.ui.notify(`Large change set (${files} files, ${changed} changed lines). Consider /tour overview and one review question.`, "info");
+    context.ui.notify(`Large change set (${files} files, ${changed} changed lines). /story narrates it and opens the review panel.`, "info");
     pi.sendMessage({
       customType: "pi-review-hint", display: true,
-      content: `Large change set: ${files} files, ${changed} changed lines. When appropriate, run review_tour action=overview and ask the user once with the question tool about the architecture and direction; do not interrogate them about every hunk.`,
+      content: `Large change set: ${files} files, ${changed} changed lines. When the user wants to see it, run the walkthrough tool (or suggest /story) and stop there; do not ask questions of your own.`,
     }, { triggerTurn: false, deliverAs: "nextTurn" });
   });
 
@@ -609,152 +609,65 @@ export default function nvimTour(pi: ExtensionAPI) {
     } catch { /* no nvim or request failed: do not block the edit */ }
   });
 
-  pi.registerCommand("tour", {
-    description: "Review changed code in Neovim: /tour start [--base <ref>] [paths] [--plain] | overview | next | prev | status | stop",
-    getArgumentCompletions: (prefix) => completeArgs(prefix, ["start", "overview", "next", "prev", "status", "stop", "live"], { live: ["on", "off"] },
-      { start: "walk stops one by one, explained (--base <ref>, --plain skips narration)", overview: "one snapshot of all changes", next: "next stop", prev: "previous stop", status: "progress", stop: "end the tour", live: "jump to edits automatically" }),
-    handler: async (args, context) => {
-      ctx = context;
-      // A command that throws leaves the user with nothing to go on, so every
-      // failure is reported with the step that failed.
+  /**
+   * `/story` ends with a walkthrough, and the editor tour is a mirror of it: the
+   * stops are installed into whatever Neovim is already connected, with the same
+   * explanations as annotations. No command, and no window opened behind the
+   * user's back — a disconnected editor simply stays out of it.
+   */
+  pi.events.on("pi-core:tour-ready", (payload: unknown) => {
+    const data = payload as { base?: string; stops?: TourStop[] } | undefined;
+    const context = ctx;
+    if (!context || context.mode !== "tui" || !data?.stops?.length) return;
+    if (!hasNvim(context.cwd)) return;
+    void (async () => {
+      const stops = data.stops!;
+      const current: TourState = {
+        stops, index: 0, base: data.base ?? "HEAD", truncated: 0,
+        sessionId: context.sessionManager.getSessionId(),
+      };
+      sessions.set(current.sessionId, current);
       try {
-        await run(args, context);
+        await install(context, stops);
+        const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
+        context.ui.setStatus("tour", `tour 1/${stops.length}`);
+        const where = typeof shown?.file === "string" && shown.file
+          ? ` · ${relative(context.cwd, shown.file)}:${shown.from_line}-${shown.to_line}`
+          : "";
+        context.ui.notify(`Neovim tour: ${stops.length} stop${stops.length === 1 ? "" : "s"}${where} · ]t/[t there`, "info");
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        lastFailure = message;
-        context.ui.setStatus("tour", "tour failed");
-        context.ui.notify(`Tour: ${message}`, "error");
+        lastFailure = error instanceof Error ? error.message : String(error);
+        context.ui.notify(`Neovim tour: ${lastFailure}`, "error");
       }
-    },
+    })();
   });
 
-  async function run(args: string, context: ExtensionCommandContext): Promise<void> {
-    {
-      const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
-      // `--base <ref>` picks what to compare against; the rest are paths.
-      let base: string | undefined;
-      let fresh = false;
-      let plain = false;
-      const paths: string[] = [];
-      for (let index = 0; index < rest.length; index++) {
-        const token = rest[index];
-        if (token === "--base" || token === "-b") { base = rest[++index]; continue; }
-        if (token.startsWith("--base=")) { base = token.slice("--base=".length); continue; }
-        if (token === "--fresh" || token === "-f") { fresh = true; continue; }
-        if (token === "--plain" || token === "--no-explain") { plain = true; continue; }
-        if (token === "fresh") { fresh = true; continue; }
-        paths.push(token);
-      }
-      if (action === "live") {
-        const value = paths[0];
-        if (value === "on" || value === "off") { liveFollow = value === "on"; context.ui.notify(`Live follow ${value === "on" ? "enabled" : "disabled"}.`, "info"); return; }
-        context.ui.notify(`Live follow: ${liveFollow ? "on" : "off"}. Use /tour live on|off.`, "info");
-        return;
-      }
-      if (action === "overview") {
-        const opened = await ensureNvim(context.cwd);
-        const plan = await planTour(context.cwd, { paths, base });
-        if (!plan.stops.length) { context.ui.notify(noChanges(plan.base, paths), "info"); return; }
-        const stat = await git(context.cwd, ["diff", "--stat", plan.base]).catch(() => "");
-        await nvimRequest({ method: "snapshot", lines: overviewLines(plan, stat), filetype: "markdown" });
-        context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Snapshot: ${plan.stops.length} stops in ${new Set(plan.stops.map((stop) => stop.file)).size} files.`, "info");
-        return;
-      }
-      if (action === "start") {
-        const opened = await ensureNvim(context.cwd);
-        const prepared = await prepareTour(context, { base, paths, fresh });
-        if (!prepared) {
-          const resolved = base ?? await resolveTourBase(context.cwd);
-          context.ui.notify(noChanges(resolved, paths), "info");
-          return;
-        }
-        // A tour without explanations is a coloured diff: the reader sees where,
-        // never why. Ask the agent to write the story first; the model finishes by
-        // calling review_tour action=start, which reuses those stops and opens the
-        // annotated tour. `--plain` keeps the instant, narration-free tour.
-        if (!prepared.reused && !plain) {
-          const scope = [
-            `base ${prepared.base}`,
-            paths.length ? `limited to ${paths.join(", ")}` : "the whole change set",
-          ].join(", ");
-          pi.sendUserMessage([
-            `Run the review flow for the current change set (${scope}).`,
-            "",
-            `1. Call the \`walkthrough\` tool with 3-6 stops that carry the story: the decision, the tricky part, the risk. Write \`why\` as the reasoning a reviewer cannot read off the code.`,
-            `2. Then call \`review_tour action=start base=${prepared.base}\`${paths.length ? ` paths=${JSON.stringify(paths)}` : ""} so the same ${prepared.stops.length} stops open in Neovim with those explanations as annotations.`,
-            "3. Ask me ONCE, with the `question` tool, whether the architecture and the direction are right and what to adjust.",
-            "",
-            "The stops are already planned, so do not re-plan them by hand; the walkthrough picks the ones worth explaining.",
-          ].join("\n"));
-          context.ui.notify(`No explanations yet: asked pi to narrate ${prepared.stops.length} stop${prepared.stops.length === 1 ? "" : "s"}, then the tour opens annotated. Use /tour start --plain for a quick unannotated pass.`, "info");
-          return;
-        }
-
-        const plan = { stops: prepared.stops, base: prepared.base, truncated: 0 };
-        const current: TourState = { stops: plan.stops, index: 0, base: plan.base, truncated: plan.truncated, sessionId: context.sessionManager.getSessionId() };
-        await install(context, plan.stops);
-        const shown = await nvimRequest<NvimResult>({ method: "tour.next" });
-        sessions.set(current.sessionId, current);
-        lastFailure = undefined;
-        const where = relative(context.cwd, shown.file);
-        const data = { index: 1, total: current.stops.length, base: plan.base, file: where, from: shown.from_line, to: shown.to_line };
-        recordTour(context, data);
-        if (prepared.reused) context.ui.notify(`Reused the walkthrough: ${current.stops.length} stop${current.stops.length === 1 ? "" : "s"} · ${plan.base}`, "info");
-        pi.sendMessage({
-          customType: "pi-tour-hint",
-          display: false,
-          content: [
-            `A Neovim tour is running: stop 1/${data.total} at ${where}:${data.from}-${data.to} (base ${plan.base}).`,
-            prepared.reused
-              ? "The stops carry the explanations of the walkthrough, so they are already annotated in the editor."
-              : "No explanations were written for these stops yet. When the user asks, explain the current stop and pass the same text as `note` to review_tour so it appears as an annotation in the editor.",
-            'Answering "what should I understand here" with only a location is not enough.',
-          ].join(" "),
-        }, { triggerTurn: false, deliverAs: "nextTurn" });
-        context.ui.notify(`${opened.opened ? "Opened Neovim. " : ""}Tour 1/${current.stops.length} · ${where}:${shown.from_line}-${shown.to_line}`, "info");
-        return;
-      }
-      const current = state();
-      if (!current) {
-        if (action === "status") {
-          context.ui.notify(`No tour is running.${lastFailure ? ` Last error: ${lastFailure}` : ""}`, "info");
-          return;
-        }
-        context.ui.notify(action === "stop" ? "No tour is running." : "No tour is running; /tour start first.", "info");
-        return;
-      }
-      if (action === "stop") {
-        sessions.delete(current.sessionId);
-        await nvimRequest({ method: "tour.clear" }).catch(() => {});
-        context.ui.setStatus("tour", undefined);
-        context.ui.notify("Tour stopped.", "info");
-        return;
-      }
-      if (action === "status") {
-        const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
-        const note = !remote?.total && lastFailure ? ` Last error: ${lastFailure}` : "";
-        context.ui.notify(remote?.total ? `Tour ${remote.index || 0}/${remote.total}${remote.file ? ` · ${relative(context.cwd, remote.file)}` : ""}` : `Tour has no stops.${note}`, "info");
-        return;
-      }
-      if (action !== "next" && action !== "prev") { context.ui.notify("Usage: /tour start|overview|next|prev|status|stop", "info"); return; }
-      const remote = await nvimRequest<RemoteTour>({ method: "tour.status" }).catch(() => undefined);
-      const anchor = remote && remote.index > 0 ? remote.index - 1 : current.index;
-      const target = anchor + (action === "next" ? 1 : -1);
-      if (target < 0 || target >= current.stops.length) { context.ui.notify("Tour finished.", "info"); return; }
-      const shown = await nvimRequest<NvimResult>({ method: action === "next" ? "tour.next" : "tour.prev" });
-      current.index = target;
-      const where = relative(context.cwd, shown.file);
-      recordTour(context, { index: target + 1, total: current.stops.length, base: current.base, file: where, from: shown.from_line, to: shown.to_line });
-      context.ui.notify(`Tour ${target + 1}/${current.stops.length} · ${where}:${shown.from_line}-${shown.to_line}`, "info");
-    }
-  }
+  // The review panel owns the flow: when it closes, the editor tour goes with it
+  // instead of lingering with stale annotations.
+  pi.events.on("pi-core:review-closed", () => {
+    const current = state();
+    if (current) sessions.delete(current.sessionId);
+    void nvimRequest({ method: "tour.clear" }).catch(() => {});
+    ctx?.ui.setStatus("tour", undefined);
+  });
 
   pi.registerCommand("nvim", {
-    description: "Neovim bridge: /nvim status | save [file]",
-    getArgumentCompletions: (prefix) => completeArgs(prefix, ["status", "save"], {}, { status: "workspace, editors, selection", save: "write a dirty buffer" }),
+    description: "Neovim bridge: /nvim status | save [file] | live on|off",
+    getArgumentCompletions: (prefix) => completeArgs(prefix, ["status", "save", "live"], { live: ["on", "off"] },
+      { status: "workspace, editors, selection", save: "write a dirty buffer", live: "jump to edits automatically" }),
     handler: async (args, context) => {
-      if (!hasNvim(context.cwd)) { context.ui.notify("Neovim is not connected.", "warning"); return; }
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      if (action === "live") {
+        const value = rest[0];
+        if (value === "on" || value === "off") {
+          liveFollow = value === "on";
+          context.ui.notify(`Live follow ${liveFollow ? "enabled" : "disabled"}.`, "info");
+          return;
+        }
+        context.ui.notify(`Live follow: ${liveFollow ? "on" : "off"}. Use /nvim live on|off.`, "info");
+        return;
+      }
+      if (!hasNvim(context.cwd)) { context.ui.notify("Neovim is not connected.", "warning"); return; }
       if (action === "save") {
         let file = rest[0] ? resolve(context.cwd, rest[0]) : undefined;
         if (!file) {

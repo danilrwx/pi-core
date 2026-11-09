@@ -103,7 +103,7 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
   const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
   process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-fake.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
   const tools = new Map();
-  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {} });
+  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, events: { on() {}, emit() {} } });
   const tool = tools.get("review_tour");
   const context = { cwd, mode: "tui", sessionManager: { getSessionId: () => "tour-test" } };
   try {
@@ -132,7 +132,7 @@ test("review_tour reports a missing Neovim connection", async () => {
   const previous = { socket: process.env.PI_NVIM_SOCKET, session: process.env.TMUX };
   delete process.env.PI_NVIM_SOCKET; delete process.env.DUET_NVIM_SOCKET; delete process.env.NVIM_LISTEN_ADDRESS; delete process.env.TMUX;
   const tools = new Map();
-  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {} });
+  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, events: { on() {}, emit() {} } });
   const tool = tools.get("review_tour");
   try {
     await assert.rejects(tool.execute("t", { action: "start" }, undefined, undefined, { cwd: process.cwd(), mode: "tui", sessionManager: { getSessionId: () => "s" } }), /tmux|not connected/);
@@ -157,7 +157,7 @@ process.stdout.write(JSON.stringify({ ok: true, result: { file: "pi://review", t
   const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN, tmux: process.env.TMUX };
   process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-fake.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
   const tools = new Map();
-  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {} });
+  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, events: { on() {}, emit() {} } });
   const tool = tools.get("review_tour");
   try {
     const result = await tool.execute("t", { action: "overview" }, undefined, undefined, { cwd, mode: "tui", sessionManager: { getSessionId: () => "overview-test" } });
@@ -225,7 +225,7 @@ test("Neovim comments arrive in pi over the session socket", async () => {
   const handlers = new Map(), messages = [];
   const pi = {
     registerTool() {}, registerCommand() {}, on(name, handler) { handlers.set(name, handler); },
-    registerEntryRenderer() {}, appendEntry() {},
+    registerEntryRenderer() {}, appendEntry() {}, events: { on() {}, emit() {} },
     sendMessage(message, options) { messages.push({ message, options }); },
   };
   const previous = process.env.PI_NVIM_SOCKET; delete process.env.PI_NVIM_SOCKET;
@@ -285,7 +285,7 @@ process.stdout.write(JSON.stringify({ ok: true, result: { id: req.id, status: re
   const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
   process.env.PI_NVIM_SOCKET = "/tmp/fake.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
   const tools = new Map();
-  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {} });
+  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, events: { on() {}, emit() {} } });
   try {
     const result = await tools.get("comment_reply").execute("t", { id: "7", text: "Fixed in controller.go", resolve: true }, undefined, undefined, { cwd: dir });
     assert.match(result.content[0].text, /comment #7 \(resolved\)/);
@@ -294,81 +294,6 @@ process.stdout.write(JSON.stringify({ ok: true, result: { id: req.id, status: re
     assert.equal(sent.id, "7");
     assert.equal(sent.resolve, true);
     assert.equal(sent.author, "pi");
-  } finally {
-    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
-    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
-  }
-});
-
-test("/tour start leaves a breadcrumb, a footer status and a hint for the model", async () => {
-  const cwd = await repo();
-  const dir = await mkdtemp(join(tmpdir(), "pi-core-tour-cmd-"));
-  const stateFile = join(dir, "fake-state.json");
-  const bin = join(dir, "fake-nvim");
-  await writeFile(bin, `#!${process.execPath}
-const fs = require("node:fs");
-const req = JSON.parse(process.env.PI_TOUR_REQUEST);
-const file = ${JSON.stringify(stateFile)};
-const load = () => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { index: 0, stops: [] };
-const save = (state) => fs.writeFileSync(file, JSON.stringify(state));
-const state = load();
-let result;
-if (req.method === "status") result = { connected: true };
-else if (req.method === "install") { state.stops = req.stops || []; state.index = 0; save(state); result = { installed: true }; }
-else if (req.method === "tour.clear") { state.stops = []; save(state); result = { cleared: true }; }
-else if (req.method === "tour.status") result = { index: state.index, total: state.stops.length };
-else if (req.method === "tour.next" || req.method === "tour.prev") {
-  state.index = Math.max(1, Math.min(state.stops.length, state.index + (req.method === "tour.next" ? 1 : -1)));
-  save(state);
-  const stop = state.stops[state.index - 1];
-  result = { file: stop.file, from_line: stop.expandedFrom, to_line: stop.expandedTo, text: "shown" };
-} else result = { file: req.file, from_line: req.from_line, to_line: req.to_line, text: "shown" };
-process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
-`);
-  execFileSync("chmod", ["755", bin]);
-  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
-  process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-fake-cmd.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
-  const commands = new Map(), entries = [], statuses = [], messages = [], userMessages = [], renderers = new Map();
-  nvimTour({
-    registerTool() {}, on() {},
-    registerCommand(name, command) { commands.set(name, command); },
-    registerEntryRenderer(type, renderer) { renderers.set(type, renderer); },
-    appendEntry(type, data) { entries.push({ type, data }); },
-    sendMessage(message, options) { messages.push({ message, options }); },
-    sendUserMessage(content) { userMessages.push(content); },
-  });
-  const context = {
-    cwd, mode: "tui",
-    sessionManager: { getSessionId: () => "tour-cmd" },
-    ui: { notify() {}, setStatus(key, value) { statuses.push([key, value]); } },
-  };
-  try {
-    await commands.get("tour").handler("start --plain", context);
-    assert.equal(entries.length, 1);
-    assert.equal(entries[0].type, "pi-core:tour");
-    assert.equal(entries[0].data.index, 1);
-    assert.equal(entries[0].data.total, 3);
-    assert.match(entries[0].data.file, /\.ts$/);
-    assert.deepEqual(statuses.at(-1), ["tour", "tour 1/3"]);
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].message.display, false);
-    assert.equal(messages[0].options.deliverAs, "nextTurn");
-    assert.match(messages[0].message.content, /stop 1\/3/);
-
-    await commands.get("tour").handler("next", context);
-    assert.equal(entries.at(-1).data.index, 2);
-    assert.deepEqual(statuses.at(-1), ["tour", "tour 2/3"]);
-
-    await commands.get("tour").handler("stop", context);
-    assert.deepEqual(statuses.at(-1), ["tour", undefined]);
-
-    // The breadcrumb renders where the chat is; without data it stays invisible.
-    const theme = { fg: (_token, text) => text, bold: (text) => text };
-    const renderer = renderers.get("pi-core:tour");
-    const card = renderer({ data: entries[0].data }, { expanded: false }, theme).render(60).join("\n");
-    assert.match(card, /tour 1\/3/);
-    assert.match(card, /\]t \[t move/);
-    assert.equal(renderer({ data: undefined }, { expanded: false }, theme), undefined);
   } finally {
     if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
@@ -397,7 +322,7 @@ process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
   const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
   process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-fake-note.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
   const tools = new Map();
-  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {} });
+  nvimTour({ registerTool(definition) { tools.set(definition.name, definition); }, registerCommand() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, events: { on() {}, emit() {} } });
   const tool = tools.get("review_tour");
   const context = { cwd, mode: "tui", sessionManager: { getSessionId: () => "note-test" } };
   try {
@@ -447,148 +372,118 @@ test("a tour of committed work falls back to the branch point instead of saying 
   }
 });
 
-test("/tour start takes --base and explains an empty tour", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "pi-core-base-cmd-"));
-  const dir = await mkdtemp(join(tmpdir(), "pi-core-base-bin-"));
-  const log = join(dir, "requests.log");
-  const bin = join(dir, "fake-nvim");
-  await writeFile(bin, `#!${process.execPath}
-const fs = require("node:fs");
-fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(JSON.parse(process.env.PI_TOUR_REQUEST)) + "\\n");
-process.stdout.write(JSON.stringify({ ok: true, result: { connected: true, file: "a.ts", from_line: 1, to_line: 2, text: "shown" } }) + "\\n");
-`);
-  execFileSync("chmod", ["755", bin]);
-  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
-  process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-base.sock"; process.env.PI_TOUR_NVIM_BIN = bin;
-  try {
-    git(cwd, "init", "-q"); git(cwd, "config", "user.email", "t@example.com"); git(cwd, "config", "user.name", "T");
-    await writeFile(join(cwd, "a.ts"), "one\n");
-    git(cwd, "add", "."); git(cwd, "commit", "-q", "-m", "init");
-    const base = git(cwd, "rev-parse", "HEAD").trim();
-    await writeFile(join(cwd, "a.ts"), "one\ntwo\n");
-    git(cwd, "commit", "-qam", "second");
-
-    const commands = new Map(), messages = [];
-    nvimTour({
-      registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {},
-      sendMessage(message) { messages.push(message); },
-      registerCommand(name, command) { commands.set(name, command); },
-    });
-    const notified = [];
-    const context = {
-      cwd, mode: "tui", sessionManager: { getSessionId: () => "base-cmd" },
-      ui: { notify(text) { notified.push(text); }, setStatus() {} },
-    };
-    await commands.get("tour").handler(`start --base ${base} --plain`, context);
-    const requests = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    assert.ok(requests.some((request) => request.method === "install"));
-    assert.match(notified.at(-1), /Tour 1\//);
-
-    // Empty diff against the given base: say what was compared and how to fix it.
-    notified.length = 0;
-    await commands.get("tour").handler("start --base HEAD --plain", context);
-    assert.match(notified.at(-1), /No changes against HEAD/);
-    assert.match(notified.at(-1), /--base origin\/main/);
-  } finally {
-    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
-    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
-    await rm(cwd, { recursive: true, force: true });
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("/tour start reuses the walkthrough of this session and re-plans when the diff moved on", async () => {
-  const cwd = await repo();
-  const dir = await mkdtemp(join(tmpdir(), "pi-core-reuse-"));
+async function fakeNvimServer() {
+  const dir = await mkdtemp(join(tmpdir(), "pi-core-story-nvim-"));
   const log = join(dir, "requests.log");
   const bin = join(dir, "fake-nvim");
   await writeFile(bin, `#!${process.execPath}
 const fs = require("node:fs");
 const req = JSON.parse(process.env.PI_TOUR_REQUEST);
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(req) + "\\n");
-let result = { connected: true, annotated: 1, installed: true };
-if (req.method === "tour.next" || req.method === "tour.prev") {
-  const stop = (req.stops && req.stops[0]) || {};
-  result = { file: "a.ts", from_line: 1, to_line: 2, text: "shown" };
-}
-if (req.method === "status") result = { connected: true };
+let result = { connected: true };
+if (req.method === "install") result = { installed: true };
+else if (req.method === "tour.next" || req.method === "tour.prev") {
+  result = { file: "a.ts", from_line: 1, to_line: 3, text: "shown" };
+} else if (req.method === "tour.status") result = { index: 1, total: 2 };
 process.stdout.write(JSON.stringify({ ok: true, result }) + "\\n");
 `);
   execFileSync("chmod", ["755", bin]);
+  return { dir, log, bin };
+}
+
+function loadWithEvents(socket, bin) {
+  const tools = new Map(), commands = new Map(), events = new Map(), entries = [], statuses = [], notified = [], messages = [];
+  const handlers = new Map();
+  nvimTour({
+    registerTool(definition) { tools.set(definition.name, definition); },
+    registerCommand(name, command) { commands.set(name, command); },
+    registerEntryRenderer() {}, appendEntry(type, data) { entries.push({ type, data }); },
+    sendMessage(message) { messages.push(message); },
+    events: { on(name, handler) { events.set(name, handler); }, emit() {} },
+    on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
+  });
+  const context = {
+    cwd: process.cwd(), mode: "tui",
+    sessionManager: { getSessionId: () => "story-nvim" },
+    ui: {
+      notify(text, level) { notified.push([text, level]); },
+      setStatus(key, value) { statuses.push([key, value]); },
+    },
+  };
+  return { tools, commands, events, entries, statuses, notified, messages, context, handlers };
+}
+
+test("a finished story installs the same stops into a connected Neovim", async () => {
+  const fake = await fakeNvimServer();
   const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
-  process.env.PI_NVIM_SOCKET = "/tmp/pi-tour-reuse.sock";
-  process.env.PI_TOUR_NVIM_BIN = bin;
+  process.env.PI_NVIM_SOCKET = join(fake.dir, "nvim.sock");
+  await writeFile(process.env.PI_NVIM_SOCKET, "");
+  process.env.PI_TOUR_NVIM_BIN = fake.bin;
   try {
-    const { default: walkthroughPlugin } = await jiti.import("../extensions/walkthrough/index.ts");
-    let walkthrough;
-    walkthroughPlugin({ registerTool(definition) { walkthrough = definition; }, sendMessage() {}, registerMessageRenderer() {}, registerCommand() {}, events: { emit() {}, on() {} } });
-    await walkthrough.execute("w", {
-      base: "HEAD",
-      stops: [{ title: "First stop", why: "Because the dialog needs it", file: "a.ts", lines: [3, 3] }],
-    }, undefined, undefined, { cwd });
+    const harness = loadWithEvents();
+    for (const handler of harness.handlers.get("session_start") ?? []) await handler({}, harness.context);
+    const stops = [
+      { file: "a.ts", from: 1, to: 3, expandedFrom: 1, expandedTo: 5, kind: "hunk", added: [2], deleted: [], note: "why it exists", title: "First" },
+      { file: "b.ts", from: 7, to: 9, expandedFrom: 6, expandedTo: 10, kind: "hunk", added: [8], deleted: [], note: "second reason", title: "Second" },
+    ];
+    harness.events.get("pi-core:tour-ready")({ base: "HEAD~1", stops });
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
-    const commands = new Map(), notified = [];
-    nvimTour({
-      registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {}, sendUserMessage() {},
-      registerCommand(name, command) { commands.set(name, command); },
-    });
-    const context = {
-      cwd, mode: "tui", sessionManager: { getSessionId: () => "reuse" },
-      ui: { notify(text) { notified.push(text); }, setStatus() {} },
-    };
-
-    await commands.get("tour").handler("start", context);
-    let install = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((request) => request.method === "install").at(-1);
-    assert.equal(install.stops.length, 1);
-    assert.equal(install.stops[0].note, "Because the dialog needs it", "the walkthrough explanation becomes the annotation");
-    assert.equal(install.stops[0].expandedFrom, install.stops[0].from);
-    assert.ok(notified.some((text) => /Reused the walkthrough: 1 stop/.test(text)));
-
-    // The diff moves: the remembered stops no longer describe the tree.
-    await writeFile(join(cwd, "a.ts"), Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join("\n") + "\nchanged-tail\n");
-    const installs = async () => (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)).filter((request) => request.method === "install");
-    const before = (await installs()).length;
-    notified.length = 0;
-    await commands.get("tour").handler("start", context);
-    assert.equal((await installs()).length, before, "a stale walkthrough must not be installed with old line numbers");
-    assert.equal(notified.some((text) => /Reused the walkthrough/.test(text)), false);
-    assert.ok(notified.some((text) => /asked pi to narrate/.test(text)), "without a usable walkthrough the tour asks for explanations");
-
-    // --plain keeps the instant tour, planned from the current tree.
-    await commands.get("tour").handler("start --plain", context);
-    install = (await installs()).at(-1);
-    assert.ok(install.stops.length > 1);
-    assert.equal(install.stops[0].note, undefined);
+    const requests = (await readFile(fake.log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    // The session start also installs an empty tour; the story one carries stops.
+    const install = requests.filter((request) => request.method === "install" && request.stops).at(-1);
+    assert.ok(install, "the stops are installed without any command");
+    assert.equal(install.stops.length, 2);
+    assert.equal(install.stops[0].note, "why it exists");
+    assert.ok(requests.some((request) => request.method === "tour.next"));
+    assert.deepEqual(harness.statuses.at(-1), ["tour", "tour 1/2"]);
+    assert.match(harness.notified.at(-1)[0], /Neovim tour: 2 stops · a\.ts:1-3/);
+    for (const handler of harness.handlers.get("session_shutdown") ?? []) await handler({}, harness.context);
   } finally {
     if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
     if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
-    await rm(cwd, { recursive: true, force: true });
-    await rm(dir, { recursive: true, force: true });
+    await rm(fake.dir, { recursive: true, force: true });
   }
 });
 
-test("a failing start reports the reason and keeps it for status", async () => {
-  const cwd = await repo();
-  const commands = new Map();
-  nvimTour({
-    registerTool() {}, on() {}, registerEntryRenderer() {}, appendEntry() {}, sendMessage() {},
-    registerCommand(name, command) { commands.set(name, command); },
-  });
-  const notified = [];
-  const statuses = [];
-  const context = {
-    cwd, mode: "tui", sessionManager: { getSessionId: () => "fail" },
-    ui: { notify(text, level) { notified.push([text, level]); }, setStatus(key, value) { statuses.push([key, value]); } },
-  };
-  // Unknown base: planning fails deep inside git, and that must reach the user.
-  await commands.get("tour").handler("start --base no-such-ref", context);
-  const failure = notified.at(-1);
-  assert.match(failure[0], /^Tour: /);
-  assert.equal(failure[1], "error");
-  assert.deepEqual(statuses.at(-1), ["tour", "tour failed"]);
+test("without Neovim the story stays in Pi and opens nothing", async () => {
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN, tmux: process.env.TMUX };
+  delete process.env.PI_NVIM_SOCKET; delete process.env.DUET_NVIM_SOCKET; delete process.env.NVIM_LISTEN_ADDRESS;
+  process.env.TMUX = "/tmp/tmux-fake";
+  try {
+    const harness = loadWithEvents();
+    for (const handler of harness.handlers.get("session_start") ?? []) await handler({}, harness.context);
+    harness.events.get("pi-core:tour-ready")({ base: "HEAD", stops: [{ file: "a.ts", from: 1, to: 2, expandedFrom: 1, expandedTo: 2, kind: "hunk", added: [1], deleted: [] }] });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(harness.notified, [], "no toast, no window, no error");
+    for (const handler of harness.handlers.get("session_shutdown") ?? []) await handler({}, harness.context);
+  } finally {
+    for (const [key, value] of [["PI_NVIM_SOCKET", previous.socket], ["PI_TOUR_NVIM_BIN", previous.bin], ["TMUX", previous.tmux]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
 
-  await commands.get("tour").handler("status", context);
-  assert.match(notified.at(-1)[0], /No tour is running\. Last error: Unknown base revision "no-such-ref"/);
+test("closing the review clears the editor tour", async () => {
+  const fake = await fakeNvimServer();
+  const previous = { socket: process.env.PI_NVIM_SOCKET, bin: process.env.PI_TOUR_NVIM_BIN };
+  process.env.PI_NVIM_SOCKET = join(fake.dir, "nvim.sock");
+  await writeFile(process.env.PI_NVIM_SOCKET, "");
+  process.env.PI_TOUR_NVIM_BIN = fake.bin;
+  try {
+    const harness = loadWithEvents();
+    for (const handler of harness.handlers.get("session_start") ?? []) await handler({}, harness.context);
+    harness.events.get("pi-core:review-closed")({});
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const requests = (await readFile(fake.log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.ok(requests.some((request) => request.method === "tour.clear"));
+    assert.deepEqual(harness.statuses.at(-1), ["tour", undefined]);
+    for (const handler of harness.handlers.get("session_shutdown") ?? []) await handler({}, harness.context);
+  } finally {
+    if (previous.socket === undefined) delete process.env.PI_NVIM_SOCKET; else process.env.PI_NVIM_SOCKET = previous.socket;
+    if (previous.bin === undefined) delete process.env.PI_TOUR_NVIM_BIN; else process.env.PI_TOUR_NVIM_BIN = previous.bin;
+    await rm(fake.dir, { recursive: true, force: true });
+  }
 });
 
 test("opening Neovim survives a slow handshake and closes the window when it never answers", async () => {
