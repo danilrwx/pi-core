@@ -336,3 +336,25 @@ test("without a base the tour shows the last commit when nothing else is left", 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("the chat block is one slide; the stops are flipped in the slider", () => {
+  const files = parseUnifiedDiff("diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n one\n+two\n");
+  const tour = {
+    title: "Two stops", base: "HEAD", fileCount: 1, additions: 1, deletions: 0,
+    stops: [
+      { title: "First", why: "first reason", file: "a.ts", hunkLabel: "hunk 1/1", hunks: files[0].hunks },
+      { title: "Second", why: "second reason", file: "a.ts", hunkLabel: "hunk 1/1", hunks: files[0].hunks },
+    ],
+  };
+  const slider = new TourView(tour, theme, 0, true).render(70).join("\n");
+  assert.match(slider, /1\/2 First/, "the first stop is the slide");
+  assert.match(slider, /first reason/);
+  assert.doesNotMatch(slider, /Second/, "the rest of the stops are not listed");
+  assert.doesNotMatch(slider, /second reason/);
+  assert.match(slider, /slide 1\/2 · \]t \[t flip the stops in the review slider/);
+
+  // Without the slider flag the whole tour is still rendered (overview use).
+  const full = new TourView(tour, theme).render(70).join("\n");
+  assert.match(full, /Second/);
+  assert.match(full, /second reason/);
+});

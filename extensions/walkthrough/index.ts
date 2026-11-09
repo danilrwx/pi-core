@@ -169,7 +169,7 @@ export default function walkthrough(pi: ExtensionAPI) {
   // persisted with the message, so the tour survives a reload.
   pi.registerMessageRenderer<WalkthroughBlock>(BLOCK_TYPE, (message, options, theme) => {
     const tour = message.details?.tour;
-    return tour ? new TourView(tour, theme, options.outputPad) : undefined;
+    return tour ? new TourView(tour, theme, options.outputPad, true) : undefined;
   });
 
   pi.registerCommand("story", {

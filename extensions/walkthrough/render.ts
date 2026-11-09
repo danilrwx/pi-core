@@ -119,7 +119,16 @@ const MAX_TOTAL_DIFF_LINES = 200;
  * theme's diff tokens so it reads like the rest of the transcript.
  */
 export class TourView implements Component {
-  constructor(private readonly tour: Tour, private readonly theme: Theme, private readonly pad = 0) {}
+  /**
+   * `slider` renders the change set as the review slider does: no list of stops
+   * in the transcript, just a header and the first stop's headline.
+   */
+  constructor(
+    private readonly tour: Tour,
+    private readonly theme: Theme,
+    private readonly pad = 0,
+    private readonly slider = false,
+  ) {}
 
   render(width: number): string[] {
     const theme = this.theme;
@@ -141,8 +150,12 @@ export class TourView implements Component {
       wrap(tour.intro, " ");
     }
 
+    // The transcript keeps one slide, not a list: the rest of the stops are read
+    // in the review slider, which flips through them one at a time.
+    const shownStops = tour.stops.slice(0, this.slider ? 1 : tour.stops.length);
     let budget = MAX_TOTAL_DIFF_LINES;
-    tour.stops.forEach((stop, index) => {
+    shownStops.forEach((stop) => {
+      const index = tour.stops.indexOf(stop);
       push("");
       push(`${theme.fg("accent", theme.bold(`${index + 1}`))}${theme.fg("dim", "/")}${theme.fg("dim", `${tour.stops.length}`)} ${theme.fg("text", theme.bold(stop.title))}`);
       const meta: string[] = [stop.file];
@@ -209,6 +222,11 @@ export class TourView implements Component {
         });
       }
     });
+
+    if (this.slider && tour.stops.length > 1) {
+      push("");
+      push(theme.fg("dim", `   slide 1/${tour.stops.length} · ]t [t flip the stops in the review slider · /story to reopen · /story submit to finish`));
+    }
 
     push("");
     push(theme.fg("borderMuted", "─".repeat(w)));
