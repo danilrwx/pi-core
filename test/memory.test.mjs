@@ -118,3 +118,49 @@ test("explicit remember requests are captured automatically", async () => {
     if (previous === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous;
   }
 });
+
+test("Jev recall uses summaries, caches decisions and falls back to keywords on errors", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-memory-jev-"));
+  const previous = process.env.PI_MEMORY_DIR;
+  process.env.PI_MEMORY_DIR = dir;
+  try {
+    await store.addMemory("/repo/a", { text: "Deploy uses the staging cluster first", description: "Deploy order" });
+    await store.addMemory("/repo/a", { text: "Use pnpm for package installs", description: "Package manager" });
+    const handlers = new Map();
+    plugin.default({ on(name, fn) { handlers.set(name, fn); }, registerTool() {}, registerCommand() {} });
+    let calls = 0;
+    const ctx = {
+      cwd: "/repo/a",
+      sessionManager: { getBranch: () => [], getSessionId: () => "s" },
+      ui: { notify() {} },
+      signal: undefined,
+      modelRegistry: {
+        findOfType(_type, provider, id) { return provider === "openrouter" && id === "typesafe/jev-1.13" ? { provider, id } : undefined; },
+        async classify(_model, request) {
+          calls++;
+          const answers = {};
+          request.state.candidates.forEach((candidate, index) => {
+            answers[`c${index}`] = { type: "bool", probability: /deploy/i.test(candidate.description) ? 0.95 : 0.1 };
+          });
+          return { stopReason: "stop", answers, usage: { input: 100, cost: { total: 0.000004 } } };
+        },
+      },
+    };
+    const event = { messageType: "user", prompt: "How do we deploy?", systemPromptOptions: { sections: {} } };
+    await handlers.get("before_agent_start")(event, ctx);
+    assert.match(event.systemPromptOptions.sections.long_term_memory, /staging cluster/);
+    assert.doesNotMatch(event.systemPromptOptions.sections.long_term_memory, /pnpm/);
+    assert.equal(calls, 1);
+    const cached = { messageType: "user", prompt: "deploy how do we?", systemPromptOptions: { sections: {} } };
+    await handlers.get("before_agent_start")(cached, ctx);
+    assert.match(cached.systemPromptOptions.sections.long_term_memory, /staging cluster/);
+    assert.equal(calls, 1, "normalized query and candidate hash should hit the local decision cache");
+
+    const broken = { ...ctx, modelRegistry: { ...ctx.modelRegistry, async classify() { throw new Error("provider down"); } } };
+    const fallback = { messageType: "user", prompt: "How do we deploy now?", systemPromptOptions: { sections: {} } };
+    await handlers.get("before_agent_start")(fallback, broken);
+    assert.match(fallback.systemPromptOptions.sections.long_term_memory, /staging cluster/);
+  } finally {
+    if (previous === undefined) delete process.env.PI_MEMORY_DIR; else process.env.PI_MEMORY_DIR = previous;
+  }
+});

@@ -105,8 +105,15 @@ TS/JS, Python, Go, Rust, Java, Kotlin, Ruby, PHP, Lua, shell; для незна�
 проверяется на явные просьбы («remember…», «запомни…», «from now on…»,
 «always use…») и сохраняется как feedback с дедупликацией. Это эвристика без
 вызова модели; `/memory auto on|off|status`, `PI_MEMORY_AUTO=0` выключает.
-Хранить секреты запрещено правилами инструмента. Никаких remote-запросов
-и embeddings.
+
+**Jev recall:** если доступен classifier (`openrouter/typesafe/jev-1.13` и
+родственные), перед ходом в Jev уходят только `description/type/tags`
+кандидатов, без тел. Локальный кеш решений (`jev-cache.json`, TTL 1 час)
+хранит выбранные id; при изменении памяти очищается. Тела выбранных top-5
+попадают в system prompt. При ошибке/таймауте/открытом circuit breaker —
+keyword fallback. `/memory jev on|off|status|clear-cache`, `PI_MEMORY_JEV=0`
+выключает. 500 записей с summary-префильтром стоят порядка $0.1–1/мес.
+Хранить секреты запрещено правилами инструмента.
 
 ### Уведомления (`notify`)
 
@@ -458,8 +465,8 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
 bash-head-tail, checkpoint/rewind, LSP-точный index, Claude-совместимая память
-(импорт, Markdown/frontmatter, auto-recall, auto-memory) и needs-input
-уведомления.
+(импорт, Markdown/frontmatter, auto-recall, auto-memory, Jev+локальный кеш) и
+needs-input уведомления.
 
 ## Что пока не перенесено
 
