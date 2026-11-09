@@ -5,7 +5,8 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { completeArgs } from "../lib/complete.js";
 import { nvimRequest, nvimSocket, hasNvim, type NvimResult } from "./nvim.js";
@@ -76,6 +77,46 @@ export function overviewLines(plan: TourPlan, stat: string): string[] {
     }),
     "",
   ];
+}
+
+/**
+ * What the chat shows for a tour step. The hunk itself is in Neovim: repeating
+ * it in the transcript buried the narration under walls of code, so the card
+ * carries the position and the progress, and the model still receives the text
+ * through the tool result content.
+ */
+function progressBar(index: number, total: number, width = 10): string {
+  if (total <= 0) return "";
+  const filled = Math.max(0, Math.min(width, Math.round((index / total) * width)));
+  return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
+interface TourRenderDetails extends Partial<TourPlan> {
+  index?: number;
+  stop?: TourStop;
+  shown?: NvimResult;
+  remote?: RemoteTour;
+}
+
+function renderTour(result: { content: { type: string; text?: string }[]; details?: unknown; isError?: boolean }, theme: Theme): Text {
+  const text = result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
+  const details = result.details as TourRenderDetails | undefined;
+  const stops = details?.stops ?? [];
+  if (!stops.length || details?.index === undefined) {
+    // "No changes to review", "Already at the first stop", status lines.
+    return new Text(text.split("\n")[0] ?? "", 0, 0);
+  }
+  const index = details.index + 1;
+  const stop = details.stop ?? stops[details.index];
+  const total = stops.length;
+  const file = stop ? `${stop.file}:${(details.shown?.from_line ?? stop.expandedFrom)}-${(details.shown?.to_line ?? stop.expandedTo)}` : "";
+  const counts = stop ? `${theme.fg("success", `+${stop.added.length}`)} ${theme.fg("error", `−${stop.deleted.length}`)}` : "";
+  const lines = [
+    `${theme.fg("accent", progressBar(index, total))} ${theme.fg("muted", `tour ${index}/${total}`)} ${counts}`,
+    theme.fg("dim", file),
+    theme.fg("dim", "in Neovim · ]t [t move · <leader>pc comment"),
+  ];
+  return new Text(lines.join("\n"), 0, 0);
 }
 
 function header(state: TourState, stop: TourStop, shown: NvimResult): string {
@@ -221,7 +262,7 @@ export default function nvimTour(pi: ExtensionAPI) {
     if (hasNvim(context.cwd)) void install(context).catch(() => {});
   });
   pi.on("session_shutdown", () => {
-    server?.closeAllConnections?.();
+    (server as { closeAllConnections?: () => void } | undefined)?.closeAllConnections?.();
     server?.close(); server = undefined;
     if (serverPath) { try { unlinkSync(serverPath); } catch { /* gone */ } }
     serverPath = undefined; sessions.clear();
@@ -299,6 +340,19 @@ export default function nvimTour(pi: ExtensionAPI) {
       current.index = target;
       return { content: [{ type: "text", text: await shownContent(context, current, shown, current.stops[target]) }], details: { ...current, shown, stop: current.stops[target] } };
     },
+    renderCall(args, theme) {
+      const action = typeof args.action === "string" ? args.action : "start";
+      const scope = args.base ? ` · ${args.base}` : "";
+      const paths = Array.isArray(args.paths) && args.paths.length ? theme.fg("dim", ` · ${args.paths.length} path${args.paths.length === 1 ? "" : "s"}`) : "";
+      return new Text(`${theme.fg("toolTitle", theme.bold("review_tour "))}${theme.fg("muted", action + scope)}${paths}`, 0, 0);
+    },
+    renderResult(result, _options, theme) {
+      if (result.isError) {
+        const part = result.content[0];
+        return new Text(theme.fg("error", part?.type === "text" ? part.text : ""), 0, 0);
+      }
+      return renderTour(result, theme);
+    },
   });
 
   pi.registerTool({
@@ -341,7 +395,6 @@ export default function nvimTour(pi: ExtensionAPI) {
   pi.registerTool({
     name: "show",
     label: "Show in Neovim",
-    readOnly: true,
     description: "Open and highlight an existing project file in the user's connected Neovim. Use when explaining code or asked to show where something happens. Returns the actual displayed buffer text, including unsaved edits. Does not write files. Lines are 1-based inclusive, at most 200 lines and 32 KiB.",
     promptSnippet: "Show a code range in the user's Neovim before explaining it",
     promptGuidelines: [
@@ -364,7 +417,6 @@ export default function nvimTour(pi: ExtensionAPI) {
   pi.registerTool({
     name: "selection",
     label: "Neovim selection",
-    readOnly: true,
     description: "Read the user's current or last visual selection from connected Neovim, including unsaved text. Returns file, cursor and selection byte coordinates (1-based), mode, changedtick and truncation. Last selection is preserved across focus changes; stale selections fail. Files must be inside the current Pi project. No file writes.",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_id, _params, _signal, _update, context) {
@@ -401,7 +453,6 @@ export default function nvimTour(pi: ExtensionAPI) {
   pi.registerTool({
     name: "nvim_context",
     label: "Neovim context",
-    readOnly: true,
     parameters: Type.Object({}, { additionalProperties: false }),
     description: "Read the connected Neovim workspace: cwd, open editors with modified flags, and the latest selection (with a stale flag when the buffer changed since it was made).",
     async execute(_id, _params, _signal, _update, context) {
@@ -506,13 +557,13 @@ export default function nvimTour(pi: ExtensionAPI) {
       if (!hasNvim(context.cwd)) { context.ui.notify("Neovim is not connected.", "warning"); return; }
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       if (action === "save") {
-        const target = rest[0] ? resolve(context.cwd, rest[0]) : undefined;
-        let file = target;
+        let file = rest[0] ? resolve(context.cwd, rest[0]) : undefined;
         if (!file) {
           const data = await nvimRequest<any>({ method: "context", root: context.cwd });
-          const current = (data?.editors ?? []).find((entry: any) => entry.current);
-          if (!current) { context.ui.notify("Neovim has no current file.", "warning"); return; }
-          file = current.file;
+          const current: unknown = (data?.editors ?? []).find((entry: any) => entry.current);
+          const currentFile = (current as { file?: unknown } | undefined)?.file;
+          if (typeof currentFile !== "string") { context.ui.notify("Neovim has no current file.", "warning"); return; }
+          file = currentFile;
         }
         const result = await nvimRequest<{ saved?: boolean; dirty?: boolean }>({ method: "document.save", file, root: context.cwd });
         context.ui.notify(result.saved ? `Saved ${relative(context.cwd, file)}` : result.dirty ? "Still dirty after save" : "No unsaved changes", "info");

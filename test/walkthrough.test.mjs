@@ -7,10 +7,12 @@ import test from "node:test";
 import { jiti } from "./host.mjs";
 
 const { parseUnifiedDiff, selectHunks, findFile, hunkSpan, clipHunk } = await jiti.import("../extensions/walkthrough/diff.ts");
-const { TourView } = await jiti.import("../extensions/walkthrough/render.ts");
+const { TourView, tokenize, wordDiff, pairChanges } = await jiti.import("../extensions/walkthrough/render.ts");
 const { default: plugin } = await jiti.import("../extensions/walkthrough/index.ts");
 
-const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text };
+const plain = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text };
+// Marks changed words so the pairing can be asserted without a terminal.
+const theme = { ...plain, inverse: (text) => `⟦${text}⟧` };
 
 const SAMPLE = `diff --git a/src/app.ts b/src/app.ts
 index 1111111..2222222 100644
@@ -85,6 +87,20 @@ test("selects hunks by index, by line range, and defaults to the first ones", ()
   assert.equal(findFile(parseUnifiedDiff(SAMPLE), "nope.ts"), undefined);
 });
 
+test("word diff marks only the tokens that changed and pairs -/+ runs", () => {
+  assert.deepEqual(tokenize("a  b"), ["a", "  ", "b"]);
+  assert.deepEqual(tokenize("2;"), ["2", ";"]);
+  const diff = wordDiff("const b = 2;", "const b = 3;");
+  assert.deepEqual(diff.before, [{ text: "const b = ", changed: false }, { text: "2", changed: true }, { text: ";", changed: false }]);
+  assert.deepEqual(diff.after, [{ text: "const b = ", changed: false }, { text: "3", changed: true }, { text: ";", changed: false }]);
+  assert.deepEqual(wordDiff("same", "same"), { before: [{ text: "same", changed: false }], after: [{ text: "same", changed: false }] });
+
+  const lines = [
+    { kind: "context" }, { kind: "del" }, { kind: "del" }, { kind: "add" }, { kind: "context" },
+  ];
+  assert.deepEqual([...pairChanges(lines)], [[1, 3]]);
+});
+
 test("a line range clips the hunk to the requested lines plus context", () => {
   const [app] = parseUnifiedDiff(SAMPLE);
   const clipped = clipHunk(app.hunks[0], 2, 3, 0);
@@ -114,7 +130,9 @@ test("renders the tour with diff colors, the reasoning and the header counts", (
   assert.match(screen, /2 files · \+3 −2 · 2 stops/);
   assert.match(screen, /function start/);
   assert.match(screen, /\+ const c = 4;/);
-  assert.match(screen, /- const b = 2;/);
+  assert.match(screen, /- const b = ⟦2⟧;/);
+  assert.match(screen, /\+ const b = ⟦3⟧;/);
+  assert.match(screen, /- const b = ⟦2⟧;/);
   assert.match(screen, /why {2}The overlay holds focus/);
   assert.match(screen, /gone\.ts is not part of this diff/);
   for (const line of lines) assert.ok(line.length <= 200, `unbounded line: ${line}`);
