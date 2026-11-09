@@ -3,7 +3,7 @@ import test from "node:test";
 import { jiti } from "./host.mjs";
 
 const data = await jiti.import("../extensions/usage/data.ts");
-const { renderUsage } = await jiti.import("../extensions/usage/index.ts");
+const { renderUsage, renderTabs, renderModelTable, summaryFor } = await jiti.import("../extensions/usage/index.ts");
 const theme = { fg: (_token, text) => text, bold: (text) => text };
 
 function point(overrides = {}) {
@@ -44,17 +44,66 @@ test("usage parses assistant, model_change and auxiliary entries", () => {
   assert.equal(points[1].source, "auxiliary");
 });
 
-test("usage panel has a Claude-Code-like compact layout", () => {
+test("the panel has five periods and shows cost, tokens, cache and hit rate", () => {
   const empty = data.summarize([]);
-  const lines = renderUsage({
-    currentSessionId: "s1", current: empty, today: empty, week: empty, all: empty,
-    context: { tokens: 50_000, contextWindow: 100_000 },
-  }, 80, theme).join("\n");
-  assert.match(lines, /^Usage/m);
-  assert.match(lines, /Current session/);
-  assert.match(lines, /Today/);
-  assert.match(lines, /Current week/);
-  assert.match(lines, /All time/);
-  assert.match(lines, /context/);
-  assert.doesNotMatch(lines, /limit/i, "no invented subscription limits");
+  const summary = data.summarize([
+    point({ id: "a", provider: "deepseek", model: "deepseek-flash", cost: 1.5, input: 12_000, output: 900, cacheRead: 380_000, cacheWrite: 40_000 }),
+    point({ id: "b", provider: "tools", model: "summaries", cost: 0.3, input: 900_000, output: 38_000, cacheRead: 0, cacheWrite: 0, source: "auxiliary" }),
+  ]);
+  const usage = { currentSessionId: "s1", current: summary, today: summary, week: summary, month: empty, all: summary };
+
+  const session = renderUsage(usage, 100, theme, "session").join("\n");
+  assert.match(session, /session/);
+  assert.match(session, /today/);
+  assert.match(session, /week/);
+  assert.match(session, /month/);
+  assert.match(session, /all time/);
+  assert.match(session, /\$1\.80/, "total cost for the period");
+  assert.match(session, /in 912\.0k · out 38\.9k/, "totals aggregate every model of the period");
+  assert.match(session, /cached 380\.0k/);
+  assert.match(session, /hit 29%/, "cache hit rate is the cached share of the prompt");
+  assert.match(session, /deepseek\/deepseek-flash/);
+  assert.match(session, /tools\/summaries/);
+  assert.match(session, /cost/, "the table is labelled");
+  assert.match(session, /msgs/);
+  assert.doesNotMatch(session, /limit/i, "no invented subscription limits");
+
+  // Another tab is another period, and the context bar belongs to the session only.
+  const month = renderUsage(usage, 100, theme, "month").join("\n");
+  assert.match(month, /since the 1st/);
+  assert.doesNotMatch(month, /context /);
+  assert.match(month, /no recorded model usage in this period/);
+  assert.equal(summaryFor(usage, "month"), empty);
+  assert.equal(summaryFor(usage, "all"), summary);
+});
+
+test("the tab strip marks the active period and the table fits any width", () => {
+  const strip = renderTabs("week", 80, theme);
+  assert.match(strip, /week/);
+  assert.match(renderTabs("all", 80, { ...theme, bg: (_token, text) => `[${text}]` }), /\[ all time \]/);
+
+  const summary = data.summarize([point()]);
+  for (const width of [56, 78, 100, 140]) {
+    const lines = renderModelTable(summary, width, theme);
+    for (const line of lines) {
+      const visible = line.replace(/\u001b\[[0-9;]*m/g, "").length;
+      assert.ok(visible <= width, `line overflows ${width}: ${line}`);
+    }
+    const header = lines[0];
+    assert.match(header, /model/);
+    assert.match(header, /cost/);
+    if (width >= 78) assert.match(header, /hit/, "the hit rate column needs room");
+    if (width < 78) assert.doesNotMatch(header, /msgs/, "narrow panels drop the least useful column");
+  }
+});
+
+test("the month period starts on the 1st and is its own summary", () => {
+  const now = new Date(2026, 7, 20, 12).getTime(); // Aug 20
+  assert.equal(new Date(data.startOfMonth(now)).getDate(), 1);
+  const points = [
+    point({ id: "aug", timestamp: new Date(2026, 7, 2, 10).getTime() }),
+    point({ id: "jul", timestamp: new Date(2026, 6, 28, 10).getTime() }),
+  ];
+  assert.equal(data.summarize(points, data.startOfMonth(now), now + 1).messages, 1);
+  assert.equal(data.summarize(points, data.startOfDay(now), now + 1).messages, 0);
 });

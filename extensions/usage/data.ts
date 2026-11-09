@@ -50,9 +50,21 @@ export interface UsageData {
   current: Summary;
   today: Summary;
   week: Summary;
+  month: Summary;
   all: Summary;
   context?: { tokens: number; contextWindow: number };
 }
+
+/** The five tabs of the usage panel, in reading order. */
+export const USAGE_PERIODS = [
+  { key: "session", label: "session" },
+  { key: "day", label: "today" },
+  { key: "week", label: "week" },
+  { key: "month", label: "month" },
+  { key: "all", label: "all time" },
+] as const;
+
+export type UsagePeriod = typeof USAGE_PERIODS[number]["key"];
 
 const CACHE_VERSION = 1;
 const CACHE_FILE = "usage-cache.json";
@@ -112,6 +124,11 @@ export function summarize(points: UsagePoint[], since = 0, until = Number.POSITI
 export function startOfDay(now = Date.now()): number {
   const date = new Date(now);
   date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+export function startOfMonth(now = Date.now()): number {
+  const date = new Date(startOfDay(now));
+  date.setDate(1);
   return date.getTime();
 }
 export function startOfWeek(now = Date.now()): number {
@@ -316,6 +333,7 @@ export async function collectUsage(ctx: ExtensionContext): Promise<UsageData> {
     current,
     today: summarize(allPoints, startOfDay(now), now + 1),
     week: summarize(allPoints, startOfWeek(now), now + 1),
+    month: summarize(allPoints, startOfMonth(now), now + 1),
     all: summarize(allPoints, 0, now + 1),
     ...(context ? { context: { tokens: context.tokens ?? 0, contextWindow: context.contextWindow } } : {}),
   };

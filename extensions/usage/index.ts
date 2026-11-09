@@ -1,15 +1,20 @@
 /**
- * Compact /usage panel in a Claude-Code-like style: current session first,
- * then today/current-week/all-time summaries and a per-model cost table.
- * No subscription limits are invented; bars show context and cache reuse.
+ * `/usage` — one panel, five tabs (session / today / week / month / all time).
+ *
+ * Each tab answers the same question for its period: what it cost, how many
+ * tokens went in and out, how much of the prompt came from the cache and what
+ * the hit rate was, per model. No subscription limits are invented.
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { frameLines } from "../lib/frame.js";
-import { cacheRate, collectUsage, formatMoney, formatTokens, type Summary, type UsageData } from "./data.js";
+import {
+  USAGE_PERIODS, cacheRate, collectUsage, formatMoney, formatTokens,
+  type Summary, type UsageData, type UsagePeriod,
+} from "./data.js";
 
-interface ThemeLike { fg(token: string, text: string): string; bold(text: string): string }
+interface ThemeLike { fg(token: string, text: string): string; bold(text: string): string; bg?(token: string, text: string): string }
 
 function padRight(text: string, width: number): string {
   return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
@@ -21,60 +26,119 @@ function bar(theme: ThemeLike, ratio: number, width = 12): string {
   const filled = Math.max(0, Math.min(width, Math.round((Number.isFinite(ratio) ? ratio : 0) * width)));
   return theme.fg("success", "█".repeat(filled)) + theme.fg("dim", "░".repeat(width - filled));
 }
-function modelLine(summary: Summary, width: number, theme: ThemeLike): string[] {
-  if (!summary.models.length) return [theme.fg("dim", "  no recorded model usage yet")];
-  return summary.models.slice(0, 6).map((model) => {
-    const name = `${model.provider}/${model.model}`;
-    const left = `  ${padRight(name, Math.max(12, width - 32))}`;
-    return `${left}${padLeft(formatMoney(model.cost), 9)}  ${padLeft(formatTokens(model.input + model.output + model.cacheWrite), 7)}  ${padLeft(`${model.messages} msg`, 7)}`;
-  });
-}
-function section(title: string, summary: Summary, width: number, theme: ThemeLike): string[] {
-  const label = padRight(title, Math.max(1, width - 10));
-  return [
-    theme.fg("accent", theme.bold(label)) + padLeft(formatMoney(summary.cost), 10),
-    theme.fg("dim", `  ${summary.messages} messages · ${formatTokens(summary.input + summary.output + summary.cacheWrite)} tokens · ${Math.round(cacheRate(summary) * 100)}% cached`),
-  ];
-}
 
-export function renderUsage(data: UsageData, width: number, theme: ThemeLike): string[] {
-  const w = Math.max(40, width);
-  const lines: string[] = [];
-  const border = theme.fg("dim", "─".repeat(w));
-  lines.push(theme.fg("accent", theme.bold("Usage")));
-  lines.push(border);
-
-  const current = data.current;
-  const currentLabel = padRight("Current session", Math.max(1, w - 10));
-  lines.push(theme.fg("text", currentLabel) + padLeft(formatMoney(current.cost), 10));
-  const models = current.models.map((model) => `${model.provider}/${model.model}`);
-  lines.push(theme.fg("dim", `  ${models.length ? models.join(", ") : "no assistant usage yet"}`));
-  lines.push(theme.fg("dim", `  ${current.messages} messages · ${formatTokens(current.input)} in · ${formatTokens(current.output)} out · ${Math.round(cacheRate(current) * 100)}% cached`));
-  if (data.context && data.context.contextWindow > 0) {
-    const ratio = data.context.tokens / data.context.contextWindow;
-    lines.push(`  ${theme.fg("muted", "context")}  ${bar(theme, ratio)}  ${padLeft(`${Math.round(ratio * 100)}%`, 4)}  ${theme.fg("dim", `${formatTokens(data.context.tokens)} / ${formatTokens(data.context.contextWindow)}`)}`);
-  } else {
-    lines.push(`  ${theme.fg("muted", "cache")}    ${bar(theme, cacheRate(current))}  ${padLeft(`${Math.round(cacheRate(current) * 100)}%`, 4)}`);
+export function summaryFor(data: UsageData, period: UsagePeriod): Summary {
+  switch (period) {
+    case "session": return data.current;
+    case "day": return data.today;
+    case "week": return data.week;
+    case "month": return data.month;
+    default: return data.all;
   }
-  lines.push("");
+}
 
-  lines.push(...section("Today", data.today, w, theme));
+/** The tab strip: the active period is filled, answered counts are dim. */
+export function renderTabs(active: UsagePeriod, width: number, theme: ThemeLike): string {
+  const parts = USAGE_PERIODS.map((period) => {
+    const text = ` ${period.label} `;
+    if (period.key === active) return theme.bg ? theme.bg("selectedBg", theme.fg("text", text)) : theme.bold(text);
+    return theme.fg("muted", text);
+  });
+  return truncateToWidth(parts.join(" "), width, "…");
+}
+
+interface Column {
+  title: string;
+  width: number;
+  right: boolean;
+  value(summary: Summary, model: Summary["models"][number]): string;
+}
+
+const COLUMNS: Column[] = [
+  { title: "cost", width: 9, right: true, value: (_summary, model) => formatMoney(model.cost) },
+  { title: "tokens", width: 7, right: true, value: (_summary, model) => formatTokens(model.input + model.output + model.cacheWrite) },
+  { title: "in", width: 7, right: true, value: (_summary, model) => formatTokens(model.input) },
+  { title: "out", width: 6, right: true, value: (_summary, model) => formatTokens(model.output) },
+  { title: "cached", width: 7, right: true, value: (_summary, model) => formatTokens(model.cacheRead) },
+  { title: "hit", width: 4, right: true, value: (_summary, model) => `${Math.round(cacheRate(model) * 100)}%` },
+  { title: "msgs", width: 6, right: true, value: (_summary, model) => String(model.messages) },
+];
+
+/** The per-model table, dropping the least important columns on a narrow panel. */
+export function renderModelTable(summary: Summary, width: number, theme: ThemeLike): string[] {
+  // Two columns of prefix, two of gap before each numeric column.
+  const nameWidth = (columns: Column[]) => width - 2 - columns.reduce((sum, column) => sum + column.width + 2, 0);
+
+  let columns = [...COLUMNS];
+  let name = nameWidth(columns);
+  while (columns.length > 2 && name < 18) {
+    columns = columns.slice(0, -1);
+    name = nameWidth(columns);
+  }
+  name = Math.max(10, name);
+
+  const header = `  ${padRight(theme.fg("dim", "model"), name)}${columns.map((column) => padLeft(theme.fg("dim", column.title), column.width + 2)).join("")}`;
+  const lines = [header];
+  if (!summary.models.length) {
+    lines.push(theme.fg("dim", "  no recorded model usage in this period"));
+    return lines;
+  }
+  summary.models.slice(0, 8).forEach((model, index) => {
+    const label = `${model.provider}/${model.model}`;
+    const shade = index % 2 === 1 ? "muted" : "text";
+    lines.push(`  ${padRight(theme.fg(shade, truncateToWidth(label, name, "…")), name)}${columns.map((column) => padLeft(theme.fg(shade, column.value(summary, model)), column.width + 2)).join("")}`);
+  });
+  if (summary.models.length > 8) lines.push(theme.fg("dim", `  … ${summary.models.length - 8} more models`));
+  return lines;
+}
+
+export function renderUsage(data: UsageData, width: number, theme: ThemeLike, active: UsagePeriod = "session"): string[] {
+  const w = Math.max(40, width);
+  const summary = summaryFor(data, active);
+  const prompt = summary.input + summary.cacheRead + summary.cacheWrite;
+  const lines: string[] = [];
+
+  lines.push(renderTabs(active, w, theme));
+  lines.push(theme.fg("dim", "─".repeat(w)));
+  lines.push(`${theme.fg("accent", theme.bold(formatMoney(summary.cost)))}${theme.fg("dim", `   ${summary.messages} messages · ${formatTokens(prompt + summary.output)} tokens`)}`);
+  lines.push([
+    theme.fg("muted", "in "), theme.fg("text", formatTokens(summary.input)),
+    theme.fg("muted", " · out "), theme.fg("text", formatTokens(summary.output)),
+    theme.fg("muted", " · cached "), theme.fg("text", formatTokens(summary.cacheRead)),
+    theme.fg("muted", " · write "), theme.fg("text", formatTokens(summary.cacheWrite)),
+    theme.fg("muted", " · hit "), theme.fg("accent", `${Math.round(cacheRate(summary) * 100)}%`),
+  ].join(""));
+
+  if (active === "session") {
+    if (data.context && data.context.contextWindow > 0) {
+      const ratio = data.context.tokens / data.context.contextWindow;
+      lines.push(`${theme.fg("muted", "context")} ${bar(theme, ratio)} ${padLeft(`${Math.round(ratio * 100)}%`, 4)} ${theme.fg("dim", `${formatTokens(data.context.tokens)} / ${formatTokens(data.context.contextWindow)}`)}`);
+    } else {
+      lines.push(`${theme.fg("muted", "cache")}   ${bar(theme, cacheRate(summary))} ${padLeft(`${Math.round(cacheRate(summary) * 100)}%`, 4)}`);
+    }
+  } else {
+    const since = {
+      day: "since midnight", week: "since Monday", month: "since the 1st", all: "everything on this machine",
+    }[active as Exclude<UsagePeriod, "session">];
+    lines.push(theme.fg("dim", since));
+  }
+
   lines.push("");
-  lines.push(...section("Current week", data.week, w, theme));
-  lines.push("");
-  lines.push(...section("All time", data.all, w, theme));
-  lines.push("");
-  lines.push(theme.fg("accent", theme.bold("By model · this week")));
-  lines.push(...modelLine(data.week, w, theme));
-  lines.push(border);
-  lines.push(theme.fg("dim", "Esc / q close"));
+  lines.push(...renderModelTable(summary, w, theme));
   return lines.map((line) => truncateToWidth(line, w, ""));
 }
 
 const plainTheme: ThemeLike = { fg: (_token, text) => text, bold: (text) => text };
 
+/** Text mode (`ctx.hasUI === false`): every period, compact. */
 function usageText(data: UsageData): string {
-  return renderUsage(data, 80, plainTheme).join("\n");
+  const sections = USAGE_PERIODS.map((period) => {
+    const summary = summaryFor(data, period.key);
+    const prompt = summary.input + summary.cacheRead + summary.cacheWrite;
+    return `${period.label}: ${formatMoney(summary.cost)} · ${summary.messages} messages · ${formatTokens(prompt + summary.output)} tokens · hit ${Math.round(cacheRate(summary) * 100)}%`;
+  });
+  const table = renderUsage(data, 80, plainTheme, "all").join("\n");
+  return ["Usage", ...sections, "", table].join("\n");
 }
 
 async function showUsage(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
@@ -83,34 +147,50 @@ async function showUsage(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promis
     pi.sendMessage({ customType: "usage", content: usageText(data), display: true }, { triggerTurn: false });
     return;
   }
-  await ctx.ui.custom<void>((_tui, theme, _keys, done) => {
+  const open = async (start: UsagePeriod) => ctx.ui.custom<void>((tui, theme, _keys, done) => {
+    let index = Math.max(0, USAGE_PERIODS.findIndex((period) => period.key === start));
     let width = -1;
     let lines: string[] = [];
+    const rows = () => tui.terminal?.rows ?? 40;
     return {
       render(currentWidth: number) {
-        if (currentWidth !== width) {
-          width = currentWidth;
-          lines = frameLines({
-            theme,
-            title: "usage",
-            width: currentWidth,
-            body: renderUsage(data, Math.max(20, currentWidth - 4), theme),
-            footer: [theme.fg("dim", "Esc or q to close")],
-          });
-        }
+        if (currentWidth === width) return lines;
+        width = currentWidth;
+        const period = USAGE_PERIODS[index].key;
+        const body = renderUsage(data, Math.max(20, currentWidth - 4), theme as unknown as ThemeLike, period);
+        const maxBody = Math.max(6, Math.floor(rows() * 0.8) - 5);
+        lines = frameLines({
+          theme: theme as unknown as Theme,
+          title: `usage · ${period}`,
+          width: currentWidth,
+          body: body.slice(0, maxBody),
+          footer: [theme.fg("dim", "←/→ or tab switch period · 1-5 jump · Esc close")],
+        });
         return lines;
       },
-      handleInput(data: string) {
-        if (matchesKey(data, "escape") || data === "q" || matchesKey(data, "return")) done();
+      handleInput(input: string) {
+        const step = matchesKey(input, "right") || matchesKey(input, "tab") || input === "l" ? 1
+          : matchesKey(input, "left") || matchesKey(input, "shift+tab") || input === "h" ? -1 : 0;
+        if (step) {
+          index = (index + step + USAGE_PERIODS.length) % USAGE_PERIODS.length;
+          width = -1;
+          tui.requestRender();
+          return;
+        }
+        const digit = /^[1-5]$/.test(input) ? Number(input) - 1 : undefined;
+        if (digit !== undefined) { index = digit; width = -1; tui.requestRender(); return; }
+        if (matchesKey(input, "escape") || input === "q" || matchesKey(input, "return")) done();
       },
       invalidate() { width = -1; },
     };
-  }, { overlay: true, overlayOptions: { width: "80%", maxHeight: "80%", minWidth: 52, anchor: "center" } });
+  }, { overlay: true, overlayOptions: { width: "80%", maxHeight: "80%", minWidth: 56, anchor: "center" } });
+
+  await open("session");
 }
 
 export default function usage(pi: ExtensionAPI): void {
   pi.registerCommand("usage", {
-    description: "Show compact usage statistics for this session, today, this week and all time",
+    description: "Usage by period: session, today, week, month, all time — cost, tokens, cache and hit rate per model",
     handler: async (_args, ctx) => showUsage(pi, ctx),
   });
 }
