@@ -254,10 +254,10 @@ export async function treeSitterSkeleton(text: string, file: string): Promise<Sk
     const found: SkeletonSymbol[] = [];
     const seen = new Set<string>();
     let visited = 0;
-    const walk = (node: Node, depth: number) => {
-      if (++visited > MAX_TS_NODES || depth > MAX_TS_DEPTH) return;
+    const walk = (node: Node, indentDepth: number, treeDepth: number) => {
+      if (++visited > MAX_TS_NODES || treeDepth > MAX_TS_DEPTH) return;
       const kind = languageName === "elixir" ? elixirDeclaration(node) : declarations[node.type];
-      let nextDepth = depth;
+      let nextDepth = indentDepth;
       if (kind) {
         const name = childName(node, languageName);
         if (name) {
@@ -276,9 +276,9 @@ export async function treeSitterSkeleton(text: string, file: string): Promise<Sk
           nextDepth += 1;
         }
       }
-      for (const child of node.namedChildren) if (child) walk(child, nextDepth);
+      for (const child of node.namedChildren) if (child) walk(child, nextDepth, treeDepth + 1);
     };
-    walk(tree.rootNode, 0);
+    walk(tree.rootNode, 0, 0);
     if (!found.length) return;
     found.sort((a, b) => a.line - b.line || a.indent - b.indent);
     return {
