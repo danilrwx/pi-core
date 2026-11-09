@@ -1,6 +1,6 @@
 import {
-  Editor, Key, matchesKey, visibleWidth, wrapTextWithAnsi,
-  type Component, type EditorTheme, type TUI,
+  Editor, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
+  type Component, type EditorTheme, type TUI, type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { pairChanges, wordDiff } from "../walkthrough/render.js";
@@ -33,6 +33,7 @@ export class ReviewOverlay implements Component {
   private editor: Editor;
   private pending: string | undefined;
   private busy = false;
+  private scroll = 0;
   private cached?: { width: number; lines: string[] };
 
   constructor(
@@ -72,9 +73,28 @@ export class ReviewOverlay implements Component {
     this.tui.requestRender();
   }
 
+  /** Wheel scrolling, so the panel behaves like any other window. */
+  handleMouse(event: TuiMouseEvent): { handled?: boolean } | undefined {
+    const delta = event.wheelDelta ?? 0;
+    if (!delta) return;
+    this.scrollBy(-Math.trunc(delta) * 3);
+    return { handled: true };
+  }
+
+  private scrollBy(lines: number): void {
+    this.scroll = Math.max(0, this.scroll + lines);
+    this.refresh();
+  }
+
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape)) { this.options.close(); return; }
     if (data === "\x13") { this.options.submit(); return; } // ctrl+s
+    if (matchesKey(data, Key.up)) { this.scrollBy(-1); return; }
+    if (matchesKey(data, Key.down)) { this.scrollBy(1); return; }
+    if (matchesKey(data, Key.pageUp) || data === "\x15") { this.scrollBy(-10); return; } // ctrl+u
+    if (matchesKey(data, Key.pageDown) || data === "\x04") { this.scrollBy(10); return; } // ctrl+d
+    if (matchesKey(data, Key.home)) { this.scroll = 0; this.refresh(); return; }
+    if (matchesKey(data, Key.end)) { this.scroll = Number.MAX_SAFE_INTEGER; this.refresh(); return; }
     if (this.pending !== undefined) {
       const first = this.pending;
       this.pending = undefined;
@@ -112,31 +132,31 @@ export class ReviewOverlay implements Component {
   render(width: number): string[] {
     if (this.cached?.width === width) return this.cached.lines;
     const theme = this.theme;
-    const w = Math.max(30, width);
+    const outer = Math.max(30, width);
+    const inner = outer - 4; // borders plus one column of padding on each side
     const { session, files } = this.options;
     const stop = currentStop(session)!;
     const turns = thread(session);
-    const lines: string[] = [];
-    const push = (text: string) => lines.push(...wrapTextWithAnsi(text, w));
-    const pushRaw = (text: string) => lines.push(text);
 
-    push(theme.fg("borderMuted", "─".repeat(w)));
+    const body: string[] = [];
+    const push = (text: string) => body.push(...wrapTextWithAnsi(text, inner));
+    const pushRaw = (text: string) => body.push(text);
+
     const total = session.stops.length;
-    push(`${theme.fg("accent", theme.bold(`review ${session.index + 1}/${total}`))}${theme.fg("dim", ` · ${session.base} · side $${this.options.sideCost().toFixed(4)}`)}`);
-    push(`${theme.fg("text", theme.bold(stop.title))}`);
-    push(theme.fg("dim", `${stop.file}:${stop.from}-${stop.to} · ${theme.fg("success", `+${stop.added.length}`)} ${theme.fg("error", `−${stop.deleted.reduce((sum, block) => sum + block.lines.length, 0)}`)}`));
+    const where = `${stop.file}:${stop.from}-${stop.to}`;
+    push(`${theme.fg("accent", theme.bold(stop.title))}`);
+    push(theme.fg("dim", `${where} · ${theme.fg("success", `+${stop.added.length}`)} ${theme.fg("error", `−${stop.deleted.reduce((sum, block) => sum + block.lines.length, 0)}`)}`));
     push("");
 
-    // The code itself, with the same presentation as the chat tour.
     const file = findFile(files, stop.file);
     if (!file) {
-      push(theme.fg("warning", "  this file is not part of the diff any more"));
+      push(theme.fg("warning", "this file is not part of the diff any more"));
     } else if (file.binary) {
-      push(theme.fg("dim", "  binary file"));
+      push(theme.fg("dim", "binary file"));
     } else {
       const picked = selectHunks(file, { lines: [stop.from, stop.to] }, 2);
       for (const hunk of picked.hunks) {
-        push(`${theme.fg("dim", `  ${hunk.header}`)}${hunk.context ? theme.fg("muted", ` ${hunk.context}`) : ""}`);
+        push(`${theme.fg("dim", hunk.header)}${hunk.context ? theme.fg("muted", ` ${hunk.context}`) : ""}`);
         const pairs = pairChanges(hunk.lines);
         const markings = new Map<number, { text: string; changed: boolean }[]>();
         for (const [removedIndex, addedIndex] of pairs) {
@@ -152,22 +172,21 @@ export class ReviewOverlay implements Component {
           const code = segments
             ? segments.map((segment) => (segment.changed ? theme.inverse(segment.text) : segment.text)).join("")
             : line.text;
-          pushRaw(`  ${theme.fg(token, `${gutter} ${marker} ${code}`.slice(0, w - 2))}`);
+          pushRaw(theme.fg(token, `${gutter} ${marker} ${code}`));
         });
         const hidden = hunk.lines.length - Math.min(hunk.lines.length, MAX_DIFF_LINES);
-        if (hidden > 0) push(theme.fg("dim", `  … ${hidden} more line${hidden === 1 ? "" : "s"}`));
+        if (hidden > 0) push(theme.fg("dim", `… ${hidden} more line${hidden === 1 ? "" : "s"}`));
       }
     }
 
     push("");
-    const whyIndent = "  ";
-    const whyWidth = Math.max(12, w - visibleWidth(whyIndent) - 5);
+    const whyWidth = Math.max(12, inner - 5);
     wrapTextWithAnsi(stop.why || "no explanation for this stop", whyWidth).forEach((line, index) => {
-      pushRaw(`${whyIndent}${index === 0 ? theme.fg("accent", "why") : "     "}${theme.fg(stop.why ? "muted" : "warning", ` ${line}`)}`);
+      pushRaw(`${index === 0 ? theme.fg("accent", "why") : "     "}${theme.fg(stop.why ? "muted" : "warning", ` ${line}`)}`);
     });
     if (stop.note) {
       wrapTextWithAnsi(stop.note, whyWidth).forEach((line, index) => {
-        pushRaw(`${whyIndent}${index === 0 ? theme.fg("warning", "note") : "      "}${theme.fg("dim", ` ${line}`)}`);
+        pushRaw(`${index === 0 ? theme.fg("warning", "note") : "      "}${theme.fg("dim", ` ${line}`)}`);
       });
     }
 
@@ -175,21 +194,53 @@ export class ReviewOverlay implements Component {
       push("");
       const shown = turns.slice(-MAX_THREAD_TURNS * 2);
       const hidden = turns.length - shown.length;
-      if (hidden > 0) push(theme.fg("dim", `  … ${hidden} earlier thread turn${hidden === 1 ? "" : "s"}`));
-      for (const turn of shown) pushThread(push, theme, turn, w);
-      if (this.busy) push(theme.fg("accent", "  thinking…"));
+      if (hidden > 0) push(theme.fg("dim", `… ${hidden} earlier thread turn${hidden === 1 ? "" : "s"}`));
+      for (const turn of shown) pushThread(push, theme, turn, inner);
+      if (this.busy) push(theme.fg("accent", "thinking…"));
     }
 
-    push("");
-    push(theme.fg("muted", "  ask about this stop:"));
-    for (const line of this.editor.render(Math.max(10, w - 4))) pushRaw(`  ${line}`);
-    push("");
-    push(theme.fg("dim", `  ]t [t move · ${session.index + 1 < total ? "/story submit to finish" : "last stop · /story submit to finish"} · Esc close (the panel stays above the editor)`));
-    push(theme.fg("borderMuted", "─".repeat(w)));
+    const footer: string[] = [];
+    footer.push(theme.fg("muted", "ask about this stop:"));
+    for (const line of this.editor.render(Math.max(10, inner - 2))) footer.push(` ${line}`);
+    footer.push(theme.fg("dim", ` ]t [t stops · ↑↓ pgup/pgdn scroll · ctrl+s submit · Esc close`));
+
+    const rows = this.tui.terminal?.rows ?? 40;
+    const height = Math.max(12, Math.floor(rows * 0.88) - 2);
+    // The box is as tall as the slide needs, not taller: an empty half-screen
+    // looks like a broken panel, so the viewport shrinks to the content.
+    const maximum = Math.max(4, height - footer.length - 2);
+    const viewport = Math.min(maximum, Math.max(4, body.length));
+    this.scroll = Math.max(0, Math.min(this.scroll, Math.max(0, body.length - viewport)));
+    const visible = body.slice(this.scroll, this.scroll + viewport);
+
+    const lines: string[] = [];
+    const title = `review ${session.index + 1}/${total} · ${session.base} · side $${this.options.sideCost().toFixed(4)}`;
+    const top = `╭─ ${title} `;
+    lines.push(theme.fg("borderMuted", truncateToWidth(top + "─".repeat(Math.max(0, outer - visibleWidth(top) - 1)) + "╮", outer, "…")));
+    const scrollbarWidth = body.length > viewport ? 1 : 0;
+    const scaled = (index: number) => Math.round((index / Math.max(1, body.length - viewport)) * Math.max(0, viewport - 1));
+    for (let index = 0; index < viewport; index++) {
+      const text = visible[index];
+      let bar = " ";
+      if (scrollbarWidth) {
+        const thumbStart = body.length > viewport ? scaled(this.scroll) : 0;
+        const thumbSize = Math.max(1, Math.round((viewport / Math.max(viewport, body.length)) * (viewport - 1)));
+        bar = index >= thumbStart && index < thumbStart + thumbSize ? "█" : "│";
+      }
+      const content = text === undefined ? "" : truncateToWidth(text, inner, "…");
+      lines.push(`${theme.fg("borderMuted", "│")} ${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))}${theme.fg("dim", bar)}${theme.fg("borderMuted", "│")}`);
+    }
+    lines.push(`${theme.fg("borderMuted", "├" + "─".repeat(outer - 2) + "┤")}`);
+    for (const line of footer) {
+      const content = truncateToWidth(line, inner, "…");
+      lines.push(`${theme.fg("borderMuted", "│")} ${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))} ${theme.fg("borderMuted", "│")}`);
+    }
+    lines.push(theme.fg("borderMuted", `╰${"─".repeat(outer - 2)}╯`));
 
     this.cached = { width, lines };
     return lines;
   }
+
 }
 
 function pushThread(push: (text: string) => void, theme: Theme, turn: Turn, width: number): void {

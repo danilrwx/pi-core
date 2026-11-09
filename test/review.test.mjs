@@ -199,7 +199,8 @@ test("the big panel shows the diff, the reason, the thread and the input", async
   assert.match(screen, /you +why does it exist\?/);
   assert.match(screen, /pi +because the overlay holds focus/);
   assert.match(screen, /ask about this stop:/);
-  assert.match(screen, /\]t \[t move/);
+  assert.match(screen, /╭─ review 1\/2 · HEAD~1 · side \$0\.0020/);
+  assert.match(screen, /\]t \[t stops · ↑↓ pgup\/pgdn scroll/);
 
   // `]t` moves inside the panel; a lone `[` still types a bracket.
   panel.handleInput("]");
@@ -240,4 +241,28 @@ test("with the panel closed, ]t flips the slide and reopens it", async () => {
   input("t");
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(reviewState().index, 0);
+});
+
+test("the panel scrolls with keys and the wheel, and draws a frame", async () => {
+  const { ReviewOverlay } = await jiti.import("../extensions/review/overlay.ts");
+  const { parseUnifiedDiff } = await jiti.import("../extensions/walkthrough/diff.ts");
+  const { visibleWidth } = await jiti.import("@earendil-works/pi-tui");
+  const lines = Array.from({ length: 60 }, (_, index) => index % 2 ? `+ line ${index}` : `- line ${index}`);
+  const files = parseUnifiedDiff(`diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,60 +1,60 @@ spec:\n${lines.join("\n")}\n`);
+  const session = sessionApi.createSession([{ file: "a.ts", from: 2, to: 40, title: "Big stop", why: "long hunk", added: [3], deleted: [] }], "HEAD");
+  const view = new ReviewOverlay(tui, theme, { session, files, sideCost: () => 0, ask() {}, submit() {}, close() {} });
+  const screen = view.render(80);
+  assert.ok(screen[0].startsWith("╭─ review 1/1"), "framed with a title");
+  assert.ok(screen.at(-1).startsWith("╰"), "and closed at the bottom");
+  for (const line of screen) assert.equal(visibleWidth(line), 80, "the frame stays rectangular");
+
+  const firstBody = screen[1];
+  view.handleInput("\u001b[B"); // ↓
+  assert.notEqual(view.render(80)[1], firstBody, "the arrow key scrolls the body");
+  view.handleInput("\u0004"); // ctrl+d
+  view.handleInput("\u001b[6~"); // pgdn
+  const scrolled = view.render(80);
+  assert.ok(scrolled.some((line) => line.includes("█")), "a scrollbar shows where the view is");
+  view.handleMouse({ type: "wheel", button: "none", x: 0, y: 0, screenX: 0, screenY: 0, width: 80, height: 20, shift: false, alt: false, ctrl: false, wheelDelta: -5 });
+  assert.ok(view.render(80).length > 0, "the wheel scrolls without breaking the frame");
 });
