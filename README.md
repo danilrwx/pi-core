@@ -101,6 +101,26 @@ Pi уже сохраняет tail stdout/stderr bash при отмене и time
 `[... middle omitted; full output: …]`. Так ошибки в начале сборки и итог в конце
 оба попадают к модели. Полный лог не загружается в память целиком.
 
+### Параллельные чтения (`batch`)
+
+Инструмент `batch` запускает до **8 независимых read-only-вызовов** за один ход
+и возвращает их результаты одним ответом. Разрешены только `read`, `grep`,
+`find`, `ls`, `index` и `lsp`.
+
+- `read`/`grep`/`find` по-прежнему могут вернуть много текста, поэтому batch
+  обрезает каждый результат до 8 KiB и весь пакет до 32 KiB; полный результат
+  при необходимости читается отдельным вызовом.
+- Ошибка одного child не отменяет остальные; в ответе видно `N/M succeeded` и
+  текст ошибки конкретного вызова.
+- `edit`, `write`, `bash`, `memory`, `checkpoint`, `question` и другие
+  изменяющие/интерактивные инструменты намеренно запрещены: параллельные правки
+  и shell-команды — это гонка, а не batch. Для них используйте обычные вызовы
+  или `codemode`.
+- `batch` не заменяет `codemode`: codemode умеет фильтровать и преобразовывать
+  результаты, а batch просто собирает независимые чтения в один round-trip.
+- Дочерние вызовы проходят через обычные `tool_call`/permission-проверки и
+  учитываются в `nestedCalls`; в транскрипте остаётся один вызов `batch`.
+
 ### `index` — скелет файла
 
 Инструмент `index` возвращает компактную карту файла: imports, классы, функции,
@@ -538,7 +558,7 @@ HTTP/WebSocket имитации API. Реальные модели, микроф
 отмена `/btw`, replay запросов, codemode, cache warming и Codex WebSocket;
 отдельно — AST-shell, частичный вывод, read-watch, изображения, voice,
 todo, question, tour (diff/dirty/context/discovery), index, memory, notify,
-bash-head-tail, checkpoint/rewind, cache-warming, cache-guard, RTK rewrite,
+bash-head-tail, checkpoint/rewind, cache-warming, cache-guard, batch, RTK rewrite,
 LSP/tree-sitter index, Claude-совместимая память (импорт, Markdown/frontmatter,
 auto-recall, auto-memory, Jev+локальный кеш) и needs-input уведомления.
 

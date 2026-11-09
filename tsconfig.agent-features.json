@@ -24,6 +24,7 @@
     "extensions/todo/*.ts",
     "extensions/nvim/*.ts",
     "extensions/index/*.ts",
-    "extensions/rtk/*.ts"
+    "extensions/rtk/*.ts",
+    "extensions/batch/*.ts"
   ]
 }

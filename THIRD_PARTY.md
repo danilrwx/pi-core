@@ -44,6 +44,10 @@ Tree-sitter grammars were copied from the `tree-sitter-wasms@0.1.13` tarball:
 and `tree-sitter-elixir@0.1.1` (`11426c5fd20eef360d5ecaf10729191f6bc5d715`).
 The licenses are kept next to the WASM files. No grammar build scripts were run.
 
+The `batch` tool is written locally. Maki `batch` (MIT) informed the
+read-only grouping, per-child output caps and partial-failure reporting; no Lua
+or other upstream code was copied.
+
 The `todo` tool and panel are written locally; Maki `todo_write` (MIT) and
 `@juicesharp/rpiv-todo` (MIT) informed the behaviour, but no code is copied.
 The Neovim tour client/bridge, discovery lock files and diff/dirty/context
